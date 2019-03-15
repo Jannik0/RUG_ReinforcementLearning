@@ -24,10 +24,10 @@ Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done'))
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
 class Network(nn.Module):
-    def __init__(self, learning_rate, action_space, flattened_size):
+    def __init__(self, learning_rate, action_space):
         super(Network, self).__init__()
         
-        self.flattened_size = flattened_size
+        self.flattened_size = self.computeConvOutputDim()
 
         self.conv1 = nn.Conv2d(in_channels=4, out_channels=16, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
@@ -55,6 +55,29 @@ class Network(nn.Module):
         observation = funct.relu(self.fc1(observation))
         q_values = self.fc2(observation)
         return q_values
+
+    def computeConvOutputDim(self):
+        #width
+        width = computeOutputDimensionConvLayer(in_dim=160, kernel_size=8, padding=0, stride=4) #conv1
+        width = computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2) #conv2
+        width = computeOutputDimensionConvLayer(in_dim=width, kernel_size=2, padding=0, stride=1) #conv3
+        
+        #height
+        height = computeOutputDimensionConvLayer(in_dim=210, kernel_size=8, padding=0, stride=4) #conv1
+        height = computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2) #conv2
+        height = computeOutputDimensionConvLayer(in_dim=height, kernel_size=2, padding=0, stride=1) #conv3
+        
+        #taking into account 4 channels (=frames)
+        width *= 4
+        height *= 4
+        
+        #width*height*out_channels
+        flattened_size = width * height * 32
+        
+        return flattened_size
+
+    def computeOutputDimensionConvLayer(self, in_dim, kernel_size, padding, stride):
+        return int((in_dim - kernel_size + 2*padding)/stride + 1)
 
 class Agent(object):
     def __init__(self, learning_rate=0, gamma=0, epsilon=0, epsilon_min=0, epsilon_decay=0,\
@@ -199,7 +222,7 @@ class Agent(object):
 def main():
     print('Hello world!')
     observation = environment.reset()
-    flattened_size = observation.reshape(1, -1)[0].size
+    flattened_size = observation.reshape(1, -1)[0].size #observation still contains 3 color channels
     # agent = Agent(...)
 
 if __name__ == "__main__": # Call main function
