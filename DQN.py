@@ -26,12 +26,14 @@ TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state
 class Network(nn.Module):
     def __init__(self, learning_rate, action_space, flattened_size):
         super(Network, self).__init__()
+        
+        self.flattened_size = flattened_size
 
         self.conv1 = nn.Conv2d(in_channels=4, out_channels=16, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=2, stride=1)
-
-        self.fc1 = nn.Linear(in_features=flattened_size, out_features=256)
+        
+        self.fc1 = nn.Linear(in_features=flattened_size + 3, out_features=256) #+3 for 3 actions to be added
         self.fc2 = nn.Linear(in_features=256, out_features=action_space)
 
         self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
@@ -46,11 +48,13 @@ class Network(nn.Module):
         observation = funct.relu(self.conv1(observation))
         observation = funct.relu(self.conv2(observation))
         observation = funct.relu(self.conv3(observation))
-
-        observation = observation.reshape(1, -1)[0]
+        
+        observation = observation.view(1, self.flattened_size) #view works directly on tensors
+        observation = torch.cat((actions, observation),1) #concatenates tensors (actions, conv-output)
+        
         observation = funct.relu(self.fc1(observation))
-        actions = self.fc2(observation)
-        return actions
+        q_values = self.fc2(observation)
+        return q_values
 
 class Agent(object):
     def __init__(self, learning_rate=0, gamma=0, epsilon=0, epsilon_min=0, epsilon_decay=0,\
