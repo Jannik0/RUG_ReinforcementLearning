@@ -69,16 +69,16 @@ class Agent(object):
         self.memory = []
         self.memory_index = 0
 
-        self.current_state = None # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
-        self.last_actions = None # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
-        self.action = 0 # Most recent action performed; used by self.constructCurrentStateAndActions()
+        self.current_state = None   # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
+        self.last_actions = None    # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
+        self.action = 0             # Most recent action performed; used by self.constructCurrentStateAndActions()
     
     # Returns tensor of current frame of environment
     def getGrayscaleFrameTensor(self):
-        image = PIL.Image.fromarray(environment.render(mode='rgb_array')) # Image to PIL.Image
+        image = PIL.Image.fromarray(environment.render(mode='rgb_array'))           # Image to PIL.Image
         image = tv.transforms.functional.to_grayscale(image, num_output_channels=1) # Use torchvision to convert to grayscale
-        image = np.array(image) # Convert PIL image back to numpy-array
-        return t.from_numpy(image).type('torch.FloatTensor') # Create tensor from numpy array
+        image = np.array(image)                                                     # Convert PIL image back to numpy-array
+        return t.from_numpy(image).type('torch.FloatTensor')                        # Create tensor from numpy array
     
     # Here the experience only consists of the current frame and the action that led to it
     def storeExperience(self, *experience):
@@ -98,8 +98,8 @@ class Agent(object):
     
     def chooseAction(self, state, actions):
         if self.chooseMax():
-            q_values = self.q_net(state, actions) # TODO preprocessing
-            squeezed_q_values = t.squeeze(q_values().clone()) # TODO vllt ohne clone
+            q_values = self.q_net(state, actions)               # TODO preprocessing
+            squeezed_q_values = t.squeeze(q_values().clone())   # TODO vllt ohne clone
             reward, action = squeezed_q_values.max(0)
             return action.item()
         else:
@@ -108,11 +108,11 @@ class Agent(object):
     # Here the TrainingExample consists of the current frame plus the last three frames and the actions that led to them + the same for the next state
     def constructSample(self, batch_size):
         mini_batch = []
-        random_indices = np.random.random_integers(low=0, high=self.action_space, size=batch_size) # Number(batch_size) random ints from [low, high)
+        random_indices = np.random.random_integers(low=0, high=self.action_space, size=batch_size)  # Number(batch_size) random ints from [low, high)
 
         for i in random_indices:
             while i == self.memory_index:
-                i = np.random.random_integers(low=0, high=self.action_space, size=1)[0] # For the current_index we don't have a 'next_state' yet; choose another action
+                i = np.random.random_integers(low=0, high=self.action_space, size=1)[0]             # For the current_index we don't have a 'next_state' yet; choose another action
                 
             # 'TrainingExample' = ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done')
             current_state = []
@@ -120,20 +120,19 @@ class Agent(object):
             next_state = []
             next_state_actions = []
             
-            # Current_state{_actions}
-            current_state.append(self.memory[i].frame) # Frame for which prediction is to be made
-            
-            for f in range(3): # For last 3 frames & actions which led to state for which prediction is to be made
-                index = (i-1-f + self.memory_capacity) % self.memory_capacity
+            #current_state{_actions}
+            current_state.append(self.memory[i].frame)                               # Frame for which prediction is to be made
+            for offset in range(1, 4):                                               # For last 3 frames & actions which led to state for which prediction is to be made
+                index = (i - offset) % self.memory_capacity
                 current_state.append(self.memory[index].frame)
                 current_state_actions.append(self.memory[index].action)
                 
-            # Next_state{_actions}
+            #next_state{_actions}
             if not self.memory[i].done:
-                index = (i+1 + self.memory_capacity) % self.memory_capacity
+                index = (i + 1) % self.memory_capacity
                 next_state.append(self.memory[index].frame)
-                for f in range(3):
-                    index = (i-f + self.memory_capacity) % self.memory_capacity
+                for offset in range(0, 3):
+                    index = (i - offset) % self.memory_capacity
                     next_state.append(self.memory[index].frame)
                     next_state_actions.append(self.memory[index].action)
             
@@ -170,7 +169,8 @@ class Agent(object):
             loss.backward()
             self.q_net.optimizer.step()
     
-    # Function to keep current state & current last_actions (multi)set up to date; shall return data to be inserted immediately into network # function appears to work properly!
+    # Function to keep current state & current last_actions (multi)set up to date; shall return data to be inserted immediately into network
+    # Function appears to work properly!
     def constructCurrentStateAndActions(self, init=False):
         if init:
             init_frame = self.getGrayscaleFrameTensor()
