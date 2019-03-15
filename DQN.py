@@ -23,9 +23,8 @@ Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done'))
 # Used for training
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
-# TODO: determine flattened_size
 class Network(nn.Module):
-    def __init__(self, learning_rate, action_space):
+    def __init__(self, learning_rate, action_space, flattened_size):
         super(Network, self).__init__()
 
         self.conv1 = nn.Conv2d(in_channels=4, out_channels=16, kernel_size=8, stride=4)
@@ -48,7 +47,7 @@ class Network(nn.Module):
         observation = funct.relu(self.conv2(observation))
         observation = funct.relu(self.conv3(observation))
 
-        observation = observation.view(1, -1)
+        observation = observation.reshape(1, -1)[0]
         observation = funct.relu(self.fc1(observation))
         actions = self.fc2(observation)
         return actions
@@ -195,6 +194,8 @@ class Agent(object):
 ## Main program
 def main():
     print('Hello world!')
+    observation = environment.reset()
+    flattened_size = observation.reshape(1, -1)[0].size
     # agent = Agent(...)
 
 if __name__ == "__main__": # Call main function
