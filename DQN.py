@@ -1,20 +1,25 @@
-import numpy as NP
+import gym
+import PIL
+import numpy as np
 import torch as T
-import torch.nn as NN
+import torch.nn as nn
 import torch.nn.functional as FUNCT
 import torch.optim as OPTIM
-import gym
+import torchvision as tv
 
 from collections import namedtuple
 
 #decide whether to run on GPU or CPU
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = T.device("cuda" if T.cuda.is_available() else "cpu")
 
 #environment
 environment = gym.make('IceHockey-v0')
 
-#frames consists of one or four frames, actions are the actions that led to each frame
-Experience = namedtuple('Experience', ('frames', 'actions', 'reward', 'done'))
+#frame: observed frame for which action had to be chosen; action: action chosen given frame; reward & done: observed after performance of action at frame
+Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done'))
+
+#used for training
+TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
 #TODO: determine flattened_size
 class Network(nn.Module):
@@ -47,12 +52,12 @@ class Network(nn.Module):
         return actions
 
 class Agent(object):
-    def __init__(self, learning_rate, gamma, epsilon, epsilon_min, epsilon_decay, action_space, memory_capacity, batch_size, q_net, target_net):
+    def __init__(self, learning_rate=0, gamma=0, epsilon=0, epsilon_min=0, epsilon_decay=0, action_space=0, memory_capacity=0, batch_size=0, q_net=None, target_net=None):
         self.learning_rate = learning_rate
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
-        self.epsilon.decay = epsilon_decay
+        self.epsilon_decay = epsilon_decay
         self.action_space = action_space
         self.memory_capacity = memory_capacity
         self.batch_size = batch_size
@@ -60,7 +65,18 @@ class Agent(object):
         self.target_net = target_net
         self.memory = []
         self.memory_index = 0
+        
+        self.current_state = None #tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
+        self.last_actions = None #tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
+        self.action = 0 #most recent action performed; used by self.constructCurrentStateAndActions()
 
+    #returns tensor of current frame of environment
+    def getGrayscaleFrameTensor(self):
+        image = PIL.Image.fromarray(environment.render(mode='rgb_array')) # Image to PIL.Image
+        image = tv.transforms.functional.to_grayscale(image, num_output_channels=1) # Use torchvision to convert to grayscale
+        image = np.array(image) # Convert PIL image back to numpy-array
+        return T.from_numpy(image).type('torch.FloatTensor') # Create tensor from numpy array
+    
     #here the experience only consists of the current frame and the action that led to it
     def storeExperience(self, *experience):
         if (len(self.memory) < self.capacity):
@@ -77,52 +93,111 @@ class Agent(object):
 
         return choose_max
 
-    def chooseAction(self, observation, actions):
+    def chooseAction(self, state, actions):
         if (self.chooseMax()):
-            q_values = self.q_net(observation, actions) #TODO preprocessing
-            squeezed_q_values = torch.squeeze(q_values().clone()) #TODO vllt ohne clone
+            q_values = self.q_net(state, actions) #TODO preprocessing
+            squeezed_q_values = T.squeeze(q_values().clone()) #TODO vllt ohne clone
             reward, action = squeezed_q_values.max(0)
             return action.item()
         else:
-            environment.action_space.sample()
+            return environment.action_space.sample()
 
-    #here the experience consists of the current frame plus the last three frames and the actions that led to them
+
+    #here the TrainingExample consists of the current frame plus the last three frames and the actions that led to them + the same for the next state
     def constructSample(self, batch_size):
+        
         mini_batch = []
-        for i in range(0, batch_size):
-            frames = [self.memory[(self.memory_index - i) % self.memory_capacity].frames,\\
-                      self.memory[(self.memory_index - i - 1) % self.memory_capacity].frames,\\
-                      self.memory[(self.memory_index - i - 2) % self.memory_capacity].frames,\\
-                      self.memory[(self.memory_index - i - 3) % self.memory_capacity].frames]
-            actions = [self.memory[(self.memory_index - i) % self.memory_capacity].actions,\\
-                       self.memory[(self.memory_index - i - 1) % self.memory_capacity].actions,\\
-                       self.memory[(self.memory_index - i - 2) % self.memory_capacity].actions]
-            experience = Experience(frames, actions, self.memory[self.memory_index].reward, self.memory[self.memory_index].done)
-            mini_batch.append(experience)
+        random_indices = np.random.random_integers(low=0, high=self.action_space, size=batch_size) # number(batch_size) random ints from [low, high)
+        
+        for i in random_indices:
+            while i == self.memory_index:
+                i = np.random.random_integers(low=0, high=self.action_space, size=1)[0] # for the current_index we don't have a 'next_state' yet; choose another action
+                
+            #'TrainingExample' = ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done')
+            current_state = []
+            current_state_actions = []
+            next_state = []
+            next_state_actions = []
+            
+            #current_state{_actions}
+            current_state.append(self.memory[i].frame) #frame for which prediction is to be made
+            
+            for f in range(3): #for last 3 frames & actions which led to state for which prediction is to be made
+                index = (i-1-f + memory_capacity)%memory_capacity
+                current_state.append(self.memory[index].frame)
+                current_state_actions.append(self.memory[index].action)
+                
+            #next_state{_actions}
+            if not self.memory[i].done:
+                index = (i+1 + memory_capacity)%memory_capacity  
+                next_state.append(self.memory[index].frame)
+                for f in range(3):
+                    index = (i-f + memory_capacity)%memory_capacity  
+                    next_state.append(self.memory[index].frame)
+                    next_state_actions.append(self.memory[index].action)
+            
+            #convert to tensors
+            current_state = T.unsqueeze(T.stack(current_state), 0)
+            current_state_actions = T.unsqueeze(T.stack(current_state_actions), 0)
+            next_state = T.unsqueeze(T.stack(next_state), 0)
+            next_state_actions = T.unsqueeze(T.stack(next_state_actions), 0)
+            
+            mini_batch.append(TrainingExample(current_state, current_state_actions, next_state, next_state_actions, self.memory[i].reward, self.memory[i].done))
 
         return mini_batch
 
-    #TODO: target_net doesn't seem right
+    #target values dimensionality shall be right, since it has to match dimensionality of q-values returned from net
     def updateNetwork(self):
         mini_batch = self.constructSample(self.batch_size)
 
         for sample in mini_batch:
-            q_values = self.q_net.forward(sample.frames, sample.actions)
+            q_values = self.q_net(sample.current_state, sample.current_state_actions)
+            
             if sample.done:
                 max_future_reward = 0
             else:
-                discounted_future_rewards = self.gamma * self.target_net(sample.frames, sample.actions)
-                max_future_reward, _ = torch.squeeze(discounted_future_rewards.max(0))
+                discounted_future_rewards = self.gamma * self.target_net(sample.next_state, sample.next_state_actions)
+                max_future_reward, _ = T.squeeze(discounted_future_rewards).max(0)
 
             max_future_reward += sample.reward
 
             target_values = q_values.clone()
-            target_values[0, int(sample.actions[0, 0])] = max_future_reward
+            target_values[0, int(sample.next_state_actions[0, 0])] = max_future_reward #TODO: check dimensionality of actions once again
 
             self.optimizer.zero_grad()
             loss = self.q_net.loss(q_values, target_values)
             loss.backward()
             self.q_net.optimizer.step()
+            
+    #function to keep current state & current last_actions (multi)set up to date; shall return data to be inserted immediately into network # function appears to work properly!
+    def constructCurrentStateAndActions(self, init = False):
+        if init:
+            init_frame = self.getGrayscaleFrameTensor()
+            self.current_state = [init_frame.clone(), init_frame.clone(), init_frame.clone(), init_frame.clone()]
+            self.current_state = T.unsqueeze(T.stack(self.current_state), 0)
+            self.last_actions = T.unsqueeze(T.zeros([1,3], dtype=T.float32), 0)
+        else:
+            #4 frames --> state
+            self.current_state[0,3] = self.current_state[0,2].clone()
+            self.current_state[0,2] = self.current_state[0,1].clone()
+            self.current_state[0,1] = self.current_state[0,0].clone()
+            self.current_state[0,0] = self.getGrayscaleFrameTensor()
+            #3 last actions
+            self.last_actions[0,0,2] = self.last_actions[0,0,1]
+            self.last_actions[0,0,1] = self.last_actions[0,0,0]
+            self.last_actions[0,0,0] = self.action
+            
+    #TODO: needs implemetation
+    def train(self):
+        return 
 
-if __name__ '__main__':
-    print('start')
+## Main program
+def main():
+    print('Hello world!')
+    #agent = Agent(...)
+    
+    
+    
+if __name__ == "__main__": # call main function
+	main()
+
