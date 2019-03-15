@@ -94,6 +94,10 @@ class Agent(object):
         self.target_net = target_net
         self.memory = []
         self.memory_index = 0
+        
+        #TODO: assign values
+        self.trainings_epochs = None
+        self.update_target_net = None
 
         self.current_state = None   # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
         self.last_actions = None    # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
@@ -114,7 +118,7 @@ class Agent(object):
         self.memory[self.memory_index] = Experience(*experience, self.memory_index)
         self.memory_index = (self.memory_index + 1) % self.memory_capacity
     
-    def chooseMax(self):
+    def performGreedyChoice(self):
         choose_max = False
         if np.random.random() > self.epsilon:
             choose_max = True
@@ -123,7 +127,7 @@ class Agent(object):
         return choose_max
     
     def chooseAction(self, state, actions):
-        if self.chooseMax():
+        if self.performGreedyChoice():
             q_values = self.q_net(state, actions)               # TODO preprocessing
             squeezed_q_values = t.squeeze(q_values().clone())   # TODO vllt ohne clone
             reward, action = squeezed_q_values.max(0)
@@ -216,13 +220,33 @@ class Agent(object):
     
     # TODO: needs implemetation
     def train(self):
-        return None
+        for epoch in range(self.trainings_epochs):
+            print('Epoch: ', epoch)
+            self.game.reset() #start new game
+            self.constructCurrentStateAndActions(init=True) #initialize current state and last actions
+            target_net_replacement_counter = 0
+            done = False
+            
+            while not done: #TODO: maybe add max number of rounds
+                self.action = self.chooseAction(self.current_state, self.last_actions)
+                
+                #TODO: maybe add skipping each k frames
+                
+                _, reward, done, _ = environment.step(self.action)
+                
+                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done)
+                self.constructCurrentStateAndActions() #update current state and actions
+                self.updateNetwork()
+                
+                if target_net_replacement_counter > self.update_target_net:
+                    self.target_net = copy.deepcopy(self.q_net) 
+                    target_net_replacement_counter = target_net_replacement_counter % self.update_target_net
+                target_net_replacement_counter += 1 
+                
 
 ## Main program
 def main():
     print('Hello world!')
-    observation = environment.reset()
-    flattened_size = observation.reshape(1, -1)[0].size #observation still contains 3 color channels
     # agent = Agent(...)
 
 if __name__ == "__main__": # Call main function
