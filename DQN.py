@@ -89,7 +89,7 @@ class Agent(object):
         self.memory = []
         self.memory_index = 0
         
-        #TODO: assign values
+        #TODO: assign values to trainings_epochs and update_target_net
         self.trainings_epochs = None
         self.update_target_net = None
 
@@ -104,12 +104,12 @@ class Agent(object):
         image = np.array(image)                                                     # Convert PIL image back to numpy-array
         return t.from_numpy(image).type('torch.FloatTensor')                        # Create tensor from numpy array
     
-    # Here the experience only consists of the current frame and the action that led to it
+    # Here the experience only consists of the current frame and the action taken in that frame
     def storeExperience(self, *experience):
         if len(self.memory) < self.memory_capacity:
             self.memory.append(None)
 
-        self.memory[self.memory_index] = Experience(*experience, self.memory_index)
+        self.memory[self.memory_index] = Experience(*experience)
         self.memory_index = (self.memory_index + 1) % self.memory_capacity
     
     def performGreedyChoice(self):
