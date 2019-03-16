@@ -1,5 +1,6 @@
 import gym
 import PIL
+import copy
 import numpy as np
 import torch as t
 import torch.nn as nn
@@ -24,7 +25,7 @@ Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done'))
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
 class Network(nn.Module):
-    def __init__(self, learning_rate=0, action_space=1):
+    def __init__(self, learning_rate, action_space):
         super(Network, self).__init__()
         
         self.flattened_size = self.computeConvOutputDim()
@@ -74,25 +75,25 @@ class Network(nn.Module):
         return int((in_dim - kernel_size + 2*padding)/stride + 1)
 
 class Agent(object):
-    def __init__(self, learning_rate=0, gamma=0, epsilon=0, epsilon_min=0, epsilon_decay=0,\
-                 action_space=0, memory_capacity=0, batch_size=0, q_net=None, target_net=None):
-        self.learning_rate = learning_rate
+    def __init__(self, gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
+                 action_space, memory_capacity, batch_size, trainings_epochs,\
+                 update_target_net, q_net, target_net):
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
         self.action_space = action_space
-        self.memory_capacity = memory_capacity
         self.batch_size = batch_size
+        self.frame_skip_rate = frame_skip_rate
         self.q_net = q_net
         self.target_net = target_net
         self.memory = []
         self.memory_index = 0
+        self.memory_capacity = memory_capacity
+        self.trainings_epochs = trainings_epochs
+        self.update_target_net = update_target_net
         
-        #TODO: assign values to trainings_epochs and update_target_net
-        self.trainings_epochs = None
-        self.update_target_net = None
-
+        #declarations
         self.current_state = None   # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
         self.last_actions = None    # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
         self.action = 0             # Most recent action performed; used by self.constructCurrentStateAndActions()
@@ -123,7 +124,7 @@ class Agent(object):
     def chooseAction(self, state, actions):
         if self.performGreedyChoice():
             q_values = self.q_net(state, actions)
-            squeezed_q_values = t.squeeze(q_values().clone())   # TODO vllt ohne clone
+            squeezed_q_values = t.squeeze(q_values)
             reward, action = squeezed_q_values.max(0)
             return action.item()
         else:
@@ -140,17 +141,17 @@ class Agent(object):
                 
             # 'TrainingExample' = ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done')
             current_state = []
-            current_state_actions = []
+            current_state_actions = t.zeros([1, 3], dtype=t.float32)
             next_state = []
-            next_state_actions = []
+            next_state_actions = t.zeros([1, 3], dtype=t.float32)
             
             #current_state{_actions}
             current_state.append(self.memory[i].frame)                               # Frame for which prediction is to be made
             for offset in range(1, 4):                                               # For last 3 frames & actions which led to state for which prediction is to be made
                 index = (i - offset) % self.memory_capacity
                 current_state.append(self.memory[index].frame)
-                current_state_actions.append(self.memory[index].action)
-                
+                current_state_actions[0,offset-1] = float(self.memory[index].action)
+            
             #next_state{_actions}
             if not self.memory[i].done:
                 index = (i + 1) % self.memory_capacity
@@ -158,13 +159,12 @@ class Agent(object):
                 for offset in range(0, 3):
                     index = (i - offset) % self.memory_capacity
                     next_state.append(self.memory[index].frame)
-                    next_state_actions.append(self.memory[index].action)
+                    next_state_actions[0,offset] = float(self.memory[index].action)
             
-            # Convert to tensors
-            current_state = t.unsqueeze(t.stack(current_state), 0)
-            current_state_actions = t.unsqueeze(t.stack(current_state_actions), 0)
-            next_state = t.unsqueeze(t.stack(next_state), 0)
-            next_state_actions = t.unsqueeze(t.stack(next_state_actions), 0)
+            # Convert to right tensor format
+            current_state = t.unsqueeze(t.stack(current_state), 0) 
+            if not self.memory[i].done:
+                next_state = t.unsqueeze(t.stack(next_state), 0)
             
             mini_batch.append(TrainingExample(current_state, current_state_actions, next_state, next_state_actions, self.memory[i].reward, self.memory[i].done))
 
@@ -172,6 +172,10 @@ class Agent(object):
     
     # Target values dimensionality shall be right, since it has to match dimensionality of q-values returned from net
     def updateNetwork(self):
+        
+        if len(self.memory) < self.memory_capacity:
+            return;
+        
         mini_batch = self.constructSample(self.batch_size)
 
         for sample in mini_batch:
@@ -213,17 +217,20 @@ class Agent(object):
             self.last_actions[0, 0] = self.action
     
     def train(self):
+        target_net_replacement_counter = 0
         for epoch in range(self.trainings_epochs):
             print('Epoch: ', epoch)
-            self.game.reset() #start new game
+            environment.reset() #start new game
             self.constructCurrentStateAndActions(init=True) #initialize current state and last actions
-            target_net_replacement_counter = 0
             done = False
+            accumulated_epoch_reward = 0
             
             while not done: #TODO: maybe add max number of rounds
                 self.action = self.chooseAction(self.current_state, self.last_actions)
                 
-                #TODO: maybe add skipping each k frames
+                #frame skipping - needs improvement, otherwise network misses rewards to be observed
+                #for skip in range(self.frame_skip_rate):
+                    #environment.step(self.action)
                 
                 _, reward, done, _ = environment.step(self.action)
                 
@@ -236,12 +243,74 @@ class Agent(object):
                     target_net_replacement_counter = target_net_replacement_counter % self.update_target_net
                 target_net_replacement_counter += 1 
                 
+                #environment.render()
+                accumulated_epoch_reward += reward
+                
+            print('Reward last epoch: ', accumulated_epoch_reward, ' Epsilon: ', self.epsilon)
 
 ## Main program
 def main():
     print('Hello world!')
-    #environment.reset()
-    #agent = Agent()
+    environment.reset()
+    
+    #variable assignments
+    learning_rate = 1e-4
+    gamma = 0.95 #discount factor
+    epsilon = 1
+    epsilon_min = 0.1
+    epsilon_decay = 1e-5
+    frame_skip_rate = 3
+    action_space = environment.action_space.n
+    memory_capacity = 20000
+    batch_size = 16
+    trainings_epochs = 200
+    update_target_net = 30
+    
+    q_net = Network(learning_rate, action_space)
+    target_net = copy.deepcopy(q_net)
+    
+    agent = Agent(gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
+                 action_space, memory_capacity, batch_size, trainings_epochs,\
+                 update_target_net, q_net, target_net)
+                 
+    agent.train()
     
 if __name__ == "__main__": # Call main function
     main()
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
