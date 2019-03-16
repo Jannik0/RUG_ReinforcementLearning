@@ -34,7 +34,7 @@ class Network(nn.Module):
         self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=2, stride=1)
         
-        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=256) # 3 for 3 actions to be added
+        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=256) # +3 for 3 actions to be added
         self.fc2 = nn.Linear(in_features=256, out_features=action_space)
 
         self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
