@@ -24,7 +24,7 @@ Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done'))
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
 class Network(nn.Module):
-    def __init__(self, learning_rate, action_space):
+    def __init__(self, learning_rate=0, action_space=1):
         super(Network, self).__init__()
         
         self.flattened_size = self.computeConvOutputDim()
@@ -33,7 +33,7 @@ class Network(nn.Module):
         self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=2, stride=1)
         
-        self.fc1 = nn.Linear(in_features=flattened_size + 3, out_features=256) #+3 for 3 actions to be added
+        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=256) #+3 for 3 actions to be added
         self.fc2 = nn.Linear(in_features=256, out_features=action_space)
 
         self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
@@ -41,42 +41,36 @@ class Network(nn.Module):
 
         self.to(device)
     
-    # TODO: use previous_actions
-    def forward(self, observation, previous_actions):
-        observation = np.mean(observation, axis=2)
-
+    def forward(self, observation, previous_actions): #works!
+        
         observation = funct.relu(self.conv1(observation))
         observation = funct.relu(self.conv2(observation))
         observation = funct.relu(self.conv3(observation))
         
         observation = observation.view(1, self.flattened_size) #view works directly on tensors
-        observation = torch.cat((actions, observation),1) #concatenates tensors (actions, conv-output)
-        
+        observation = t.cat((previous_actions, observation),1) #concatenates tensors (actions, conv-output)
         observation = funct.relu(self.fc1(observation))
         q_values = self.fc2(observation)
+        
         return q_values
 
-    def computeConvOutputDim(self):
+    def computeConvOutputDim(self): #works!
         #width
-        width = computeOutputDimensionConvLayer(in_dim=160, kernel_size=8, padding=0, stride=4) #conv1
-        width = computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2) #conv2
-        width = computeOutputDimensionConvLayer(in_dim=width, kernel_size=2, padding=0, stride=1) #conv3
+        width = self.computeOutputDimensionConvLayer(in_dim=160, kernel_size=8, padding=0, stride=4) #conv1
+        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2) #conv2
+        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=2, padding=0, stride=1) #conv3
         
         #height
-        height = computeOutputDimensionConvLayer(in_dim=210, kernel_size=8, padding=0, stride=4) #conv1
-        height = computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2) #conv2
-        height = computeOutputDimensionConvLayer(in_dim=height, kernel_size=2, padding=0, stride=1) #conv3
-        
-        #taking into account 4 channels (=frames)
-        width *= 4
-        height *= 4
+        height = self.computeOutputDimensionConvLayer(in_dim=210, kernel_size=8, padding=0, stride=4) #conv1
+        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2) #conv2
+        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=2, padding=0, stride=1) #conv3
         
         #width*height*out_channels
-        flattened_size = width * height * 32
+        flattened_size = width * height * 64
         
         return flattened_size
 
-    def computeOutputDimensionConvLayer(self, in_dim, kernel_size, padding, stride):
+    def computeOutputDimensionConvLayer(self, in_dim, kernel_size, padding, stride): #works!
         return int((in_dim - kernel_size + 2*padding)/stride + 1)
 
 class Agent(object):
@@ -105,7 +99,7 @@ class Agent(object):
     
     # Returns tensor of current frame of environment
     def getGrayscaleFrameTensor(self):
-        image = PIL.Image.fromarray(environment.render(mode='rgb_array'))           # Image to PIL.Image
+        image = PIL.Image.fromarray(environment.render(mode='rgb_array'))           # Frame to PIL.Image
         image = tv.transforms.functional.to_grayscale(image, num_output_channels=1) # Use torchvision to convert to grayscale
         image = np.array(image)                                                     # Convert PIL image back to numpy-array
         return t.from_numpy(image).type('torch.FloatTensor')                        # Create tensor from numpy array
@@ -128,7 +122,7 @@ class Agent(object):
     
     def chooseAction(self, state, actions):
         if self.performGreedyChoice():
-            q_values = self.q_net(state, actions)               # TODO preprocessing
+            q_values = self.q_net(state, actions)
             squeezed_q_values = t.squeeze(q_values().clone())   # TODO vllt ohne clone
             reward, action = squeezed_q_values.max(0)
             return action.item()
@@ -192,7 +186,7 @@ class Agent(object):
             max_future_reward += sample.reward
 
             target_values = q_values.clone()
-            target_values[0, int(sample.next_state_actions[0, 0])] = max_future_reward # TODO: check dimensionality of actions once again
+            target_values[0, int(sample.next_state_actions[0, 0])] = max_future_reward
 
             self.q_net.optimizer.zero_grad()
             loss = self.q_net.loss(q_values, target_values)
@@ -202,23 +196,22 @@ class Agent(object):
     # Function to keep current state & current last_actions (multi)set up to date; shall return data to be inserted immediately into network
     # Function appears to work properly!
     def constructCurrentStateAndActions(self, init=False):
-        if init:
+        if init: #seems to work
             init_frame = self.getGrayscaleFrameTensor()
             self.current_state = [init_frame.clone(), init_frame.clone(), init_frame.clone(), init_frame.clone()]
             self.current_state = t.unsqueeze(t.stack(self.current_state), 0)
-            self.last_actions = t.unsqueeze(t.zeros([1, 3], dtype=t.float32), 0)
+            self.last_actions = t.zeros([1, 3], dtype=t.float32)
         else:
-            # 4 frames --> state
+            # 4 frames --> state - works!
             self.current_state[0, 3] = self.current_state[0, 2].clone()
             self.current_state[0, 2] = self.current_state[0, 1].clone()
             self.current_state[0, 1] = self.current_state[0, 0].clone()
             self.current_state[0, 0] = self.getGrayscaleFrameTensor()
-            # 3 last actions
-            self.last_actions[0, 0, 2] = self.last_actions[0, 0, 1]
-            self.last_actions[0, 0, 1] = self.last_actions[0, 0, 0]
-            self.last_actions[0, 0, 0] = self.action
+            # 3 last actions - works!
+            self.last_actions[0, 2] = self.last_actions[0, 1]
+            self.last_actions[0, 1] = self.last_actions[0, 0]
+            self.last_actions[0, 0] = self.action
     
-    # TODO: needs implemetation
     def train(self):
         for epoch in range(self.trainings_epochs):
             print('Epoch: ', epoch)
@@ -247,7 +240,8 @@ class Agent(object):
 ## Main program
 def main():
     print('Hello world!')
-    # agent = Agent(...)
-
+    #environment.reset()
+    #agent = Agent()
+    
 if __name__ == "__main__": # Call main function
     main()
