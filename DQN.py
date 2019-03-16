@@ -34,7 +34,7 @@ class Network(nn.Module):
         self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=2, stride=1)
         
-        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=256) #+3 for 3 actions to be added
+        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=256) # 3 for 3 actions to be added
         self.fc2 = nn.Linear(in_features=256, out_features=action_space)
 
         self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
@@ -48,31 +48,31 @@ class Network(nn.Module):
         observation = funct.relu(self.conv2(observation))
         observation = funct.relu(self.conv3(observation))
         
-        observation = observation.view(1, self.flattened_size) #view works directly on tensors
-        observation = t.cat((previous_actions, observation),1) #concatenates tensors (actions, conv-output)
+        observation = observation.view(1, self.flattened_size)  # view works directly on tensors
+        observation = t.cat((previous_actions, observation), 1) # concatenates tensors (actions, conv-output)
         observation = funct.relu(self.fc1(observation))
         q_values = self.fc2(observation)
         
         return q_values
 
     def computeConvOutputDim(self): #works!
-        #width
-        width = self.computeOutputDimensionConvLayer(in_dim=160, kernel_size=8, padding=0, stride=4) #conv1
-        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2) #conv2
-        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=2, padding=0, stride=1) #conv3
+        # width
+        width = self.computeOutputDimensionConvLayer(in_dim=160, kernel_size=8, padding=0, stride=4)        #conv1
+        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2)      #conv2
+        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=2, padding=0, stride=1)      #conv3
         
-        #height
-        height = self.computeOutputDimensionConvLayer(in_dim=210, kernel_size=8, padding=0, stride=4) #conv1
-        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2) #conv2
-        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=2, padding=0, stride=1) #conv3
+        # height
+        height = self.computeOutputDimensionConvLayer(in_dim=210, kernel_size=8, padding=0, stride=4)       #conv1
+        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2)    #conv2
+        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=2, padding=0, stride=1)    #conv3
         
-        #width*height*out_channels
+        # width * height * out_channels
         flattened_size = width * height * 64
         
         return flattened_size
 
     def computeOutputDimensionConvLayer(self, in_dim, kernel_size, padding, stride): #works!
-        return int((in_dim - kernel_size + 2*padding)/stride + 1)
+        return int((in_dim - kernel_size + 2 * padding) / stride + 1)
 
 class Agent(object):
     def __init__(self, gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
@@ -93,7 +93,7 @@ class Agent(object):
         self.trainings_epochs = trainings_epochs
         self.update_target_net = update_target_net
         
-        #declarations
+        # Declarations
         self.current_state = None   # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
         self.last_actions = None    # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
         self.action = 0             # Most recent action performed; used by self.constructCurrentStateAndActions()
@@ -150,7 +150,7 @@ class Agent(object):
             for offset in range(1, 4):                                               # For last 3 frames & actions which led to state for which prediction is to be made
                 index = (i - offset) % self.memory_capacity
                 current_state.append(self.memory[index].frame)
-                current_state_actions[0,offset-1] = float(self.memory[index].action)
+                current_state_actions[0, offset - 1] = float(self.memory[index].action)
             
             #next_state{_actions}
             if not self.memory[i].done:
@@ -159,10 +159,10 @@ class Agent(object):
                 for offset in range(0, 3):
                     index = (i - offset) % self.memory_capacity
                     next_state.append(self.memory[index].frame)
-                    next_state_actions[0,offset] = float(self.memory[index].action)
+                    next_state_actions[0, offset] = float(self.memory[index].action)
             
             # Convert to right tensor format
-            current_state = t.unsqueeze(t.stack(current_state), 0) 
+            current_state = t.unsqueeze(t.stack(current_state), 0)
             if not self.memory[i].done:
                 next_state = t.unsqueeze(t.stack(next_state), 0)
             
@@ -174,7 +174,7 @@ class Agent(object):
     def updateNetwork(self):
         
         if len(self.memory) < self.memory_capacity:
-            return;
+            return
         
         mini_batch = self.constructSample(self.batch_size)
 
@@ -220,8 +220,8 @@ class Agent(object):
         target_net_replacement_counter = 0
         for epoch in range(self.trainings_epochs):
             print('Epoch: ', epoch)
-            environment.reset() #start new game
-            self.constructCurrentStateAndActions(init=True) #initialize current state and last actions
+            environment.reset()                             # Start new game
+            self.constructCurrentStateAndActions(init=True) # Initialize current state and last actions
             done = False
             accumulated_epoch_reward = 0
             
@@ -235,13 +235,13 @@ class Agent(object):
                 _, reward, done, _ = environment.step(self.action)
                 
                 self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done)
-                self.constructCurrentStateAndActions() #update current state and actions
+                self.constructCurrentStateAndActions()      # Update current state and actions
                 self.updateNetwork()
                 
                 if target_net_replacement_counter > self.update_target_net:
-                    self.target_net = copy.deepcopy(self.q_net) 
+                    self.target_net = copy.deepcopy(self.q_net)
                     target_net_replacement_counter = target_net_replacement_counter % self.update_target_net
-                target_net_replacement_counter += 1 
+                target_net_replacement_counter += 1
                 
                 #environment.render()
                 accumulated_epoch_reward += reward
@@ -253,9 +253,9 @@ def main():
     print('Hello world!')
     environment.reset()
     
-    #variable assignments
+    # Variable assignments
     learning_rate = 1e-4
-    gamma = 0.95 #discount factor
+    gamma = 0.95 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
     epsilon_decay = 1e-5
@@ -277,40 +277,3 @@ def main():
     
 if __name__ == "__main__": # Call main function
     main()
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
