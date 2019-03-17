@@ -43,6 +43,13 @@ class Network(nn.Module):
         self.to(device)
     
     def forward(self, observation, previous_actions): #works!
+        if not observation.is_cuda:
+            print('Observation wasn\'t cuda!')
+            observation.to(device)
+        
+        if not previous_actions.is_cuda:
+            print('Previous_actions wasn\'t cuda!')
+            previous_actions.to(device)
         
         observation = funct.relu(self.conv1(observation))
         observation = funct.relu(self.conv2(observation))
@@ -123,7 +130,7 @@ class Agent(object):
     
     def chooseAction(self, state, actions):
         if self.performGreedyChoice():
-            q_values = self.q_net(state, actions)
+            q_values = self.q_net(state.to(device), actions.to(device))
             squeezed_q_values = t.squeeze(q_values)
             reward, action = squeezed_q_values.max(0)
             return action.item()
@@ -179,12 +186,12 @@ class Agent(object):
         mini_batch = self.constructSample(self.batch_size)
 
         for sample in mini_batch:
-            q_values = self.q_net(sample.current_state, sample.current_state_actions)
+            q_values = self.q_net(sample.current_state.to(device), sample.current_state_actions.to(device))
             
             if sample.done:
                 max_future_reward = 0
             else:
-                discounted_future_rewards = self.gamma * self.target_net(sample.next_state, sample.next_state_actions)
+                discounted_future_rewards = self.gamma * self.target_net(sample.next_state.to(device), sample.next_state_actions.to(device))
                 max_future_reward, _ = t.squeeze(discounted_future_rewards).max(0)
 
             max_future_reward += sample.reward
@@ -261,7 +268,7 @@ def main():
     epsilon_decay = 1e-5
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 20000
+    memory_capacity = 35000
     batch_size = 16
     trainings_epochs = 200
     update_target_net = 30
