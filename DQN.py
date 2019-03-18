@@ -138,11 +138,11 @@ class Agent(object):
     # Here the TrainingExample consists of the current frame plus the last three frames and the actions that led to them + the same for the next state
     def constructSample(self, batch_size):
         mini_batch = []
-        random_indices = np.random.random_integers(low=0, high=len(self.memory), size=batch_size)  # Number(batch_size) random ints from [low, high)
+        random_indices = np.random.random_integers(low=0, high=len(self.memory)-1, size=batch_size)  # Number(batch_size) random ints from [low, high)
 
         for i in random_indices:
             while i == self.memory_index:
-                i = np.random.random_integers(low=0, high=len(self.memory), size=1)[0]             # For the current_index we don't have a 'next_state' yet; choose another action
+                i = np.random.random_integers(low=0, high=len(self.memory)-1, size=1)[0]             # For the current_index we don't have a 'next_state' yet; choose another action
                 
             # 'TrainingExample' = ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done')
             current_state = []
