@@ -44,11 +44,9 @@ class Network(nn.Module):
     
     def forward(self, observation, previous_actions): #works!
         if not observation.is_cuda:
-            print('Observation wasn\'t cuda!')
             observation.to(device)
         
         if not previous_actions.is_cuda:
-            print('Previous_actions wasn\'t cuda!')
             previous_actions.to(device)
         
         observation = funct.relu(self.conv1(observation))
@@ -270,7 +268,7 @@ def main():
     action_space = environment.action_space.n
     memory_capacity = 35000
     batch_size = 16
-    trainings_epochs = 200
+    trainings_epochs = 100
     update_target_net = 30
     
     q_net = Network(learning_rate, action_space)
