@@ -45,7 +45,6 @@ class Network(nn.Module):
     def forward(self, observation, previous_actions): #works!
         if not observation.is_cuda:
             observation.to(device)
-        
         if not previous_actions.is_cuda:
             previous_actions.to(device)
         
@@ -275,8 +274,8 @@ def main():
     target_net = copy.deepcopy(q_net)
     
     agent = Agent(gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
-                 action_space, memory_capacity, batch_size, trainings_epochs,\
-                 update_target_net, q_net, target_net)
+                  action_space, memory_capacity, batch_size, trainings_epochs,\
+                  update_target_net, q_net, target_net)
                  
     agent.train()
     
