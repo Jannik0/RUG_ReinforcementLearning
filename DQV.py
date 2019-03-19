@@ -42,11 +42,22 @@ class Network(nn.Module):
 
         self.to(device)
     
-    def forward(self, observation, previous_actions):
+    def forward(self, observation, previous_actions): #works!
         if not observation.is_cuda:
             observation.to(device)
         if not previous_actions.is_cuda:
             previous_actions.to(device)
+        
+        observation = funct.relu(self.conv1(observation))
+        observation = funct.relu(self.conv2(observation))
+        observation = funct.relu(self.conv3(observation))
+        
+        observation = observation.view(1, self.flattened_size)  # view works directly on tensors
+        observation = t.cat((previous_actions, observation), 1) # concatenates tensors (actions, conv-output)
+        observation = funct.relu(self.fc1(observation))
+        q_values = self.fc2(observation)
+        
+        return q_values
     
     def computeConvOutputDim(self): #works!
         # width
@@ -163,6 +174,94 @@ class Agent(object):
             mini_batch.append(TrainingExample(current_state, current_state_actions, next_state, next_state_actions, self.memory[i].reward, self.memory[i].done))
 
         return mini_batch
+    
+    # Target values dimensionality shall be right, since it has to match dimensionality of q-values returned from net
+    def updateNetwork(self):
+        
+        if len(self.memory) < self.memory_capacity:
+            return
+        
+        mini_batch = self.constructSample(self.batch_size)
+
+        for sample in mini_batch:
+            if sample.done:
+                max_future_reward = 0
+            else:
+                discounted_future_rewards = self.gamma * self.target_v_net(sample.next_state.to(device), sample.next_state_actions.to(device))
+                max_future_reward, _ = t.squeeze(discounted_future_rewards).max(0)      # TODO: simplify
+
+            max_future_reward += sample.reward
+
+            # Update Q network
+            q_values = self.q_net(sample.current_state.to(device), sample.current_state_actions.to(device))
+
+            target_values = q_values.clone()
+            target_values[0, int(sample.next_state_actions[0, 0])] = max_future_reward
+
+            self.q_net.optimizer.zero_grad()
+            loss = self.q_net.loss(q_values, target_values)
+            loss.backward()
+            self.q_net.optimizer.step()
+
+            # Update V network
+            v_value = self.v_net(sample.current_state.to(device), sample.current_state_actions.to(device))
+
+            self.v_net.optimizer.zero_grad()
+            loss = self.v_net.loss(v_value, max_future_reward)      # TODO: custom loss (maybe)
+            loss.backward()
+            self.v_net.optimizer.step()
+
+    
+    # Function to keep current state & current last_actions (multi)set up to date; shall return data to be inserted immediately into network
+    # Function appears to work properly!
+    def constructCurrentStateAndActions(self, init=False):
+        if init: #seems to work
+            init_frame = self.getGrayscaleFrameTensor()
+            self.current_state = [init_frame.clone(), init_frame.clone(), init_frame.clone(), init_frame.clone()]
+            self.current_state = t.unsqueeze(t.stack(self.current_state), 0)
+            self.last_actions = t.zeros([1, 3], dtype=t.float32)
+        else:
+            # 4 frames --> state - works!
+            self.current_state[0, 3] = self.current_state[0, 2].clone()
+            self.current_state[0, 2] = self.current_state[0, 1].clone()
+            self.current_state[0, 1] = self.current_state[0, 0].clone()
+            self.current_state[0, 0] = self.getGrayscaleFrameTensor()
+            # 3 last actions - works!
+            self.last_actions[0, 2] = self.last_actions[0, 1]
+            self.last_actions[0, 1] = self.last_actions[0, 0]
+            self.last_actions[0, 0] = self.action
+    
+    def train(self):
+        target_net_replacement_counter = 0
+        for epoch in range(self.trainings_epochs):
+            print('Epoch: ', epoch)
+            environment.reset()                             # Start new game
+            self.constructCurrentStateAndActions(init=True) # Initialize current state and last actions
+            done = False
+            accumulated_epoch_reward = 0
+            
+            while not done: #TODO: maybe add max number of rounds
+                self.action = self.chooseAction(self.current_state, self.last_actions)
+                
+                #frame skipping - needs improvement, otherwise network misses rewards to be observed
+                #for skip in range(self.frame_skip_rate):
+                    #environment.step(self.action)
+                
+                _, reward, done, _ = environment.step(self.action)
+                
+                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done)
+                self.constructCurrentStateAndActions()      # Update current state and actions
+                self.updateNetwork()
+                
+                if target_net_replacement_counter > self.update_target_net:
+                    self.target_v_net = copy.deepcopy(self.v_net)
+                    target_net_replacement_counter = target_net_replacement_counter % self.update_target_net
+                target_net_replacement_counter += 1
+                
+                #environment.render()
+                accumulated_epoch_reward += reward
+                
+            print('Reward last epoch: ', accumulated_epoch_reward, ' Epsilon: ', self.epsilon)
 
 ## Main program
 def main():
