@@ -123,6 +123,46 @@ class Agent(object):
             return action.item()
         else:
             return environment.action_space.sample()
+    
+    # Here the TrainingExample consists of the current frame plus the last three frames and the actions that led to them + the same for the next state
+    def constructSample(self, batch_size):
+        mini_batch = []
+        random_indices = np.random.random_integers(low=0, high=len(self.memory)-1, size=batch_size)  # Number(batch_size) random ints from [low, high)
+
+        for i in random_indices:
+            while i == self.memory_index:
+                i = np.random.random_integers(low=0, high=len(self.memory)-1, size=1)[0]             # For the current_index we don't have a 'next_state' yet; choose another action
+                
+            # 'TrainingExample' = ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done')
+            current_state = []
+            current_state_actions = t.zeros([1, 3], dtype=t.float32)
+            next_state = []
+            next_state_actions = t.zeros([1, 3], dtype=t.float32)
+            
+            #current_state{_actions}
+            current_state.append(self.memory[i].frame)                               # Frame for which prediction is to be made
+            for offset in range(1, 4):                                               # For last 3 frames & actions which led to state for which prediction is to be made
+                index = (i - offset) % self.memory_capacity
+                current_state.append(self.memory[index].frame)
+                current_state_actions[0, offset - 1] = float(self.memory[index].action)
+            
+            #next_state{_actions}
+            if not self.memory[i].done:
+                index = (i + 1) % self.memory_capacity
+                next_state.append(self.memory[index].frame)
+                for offset in range(0, 3):
+                    index = (i - offset) % self.memory_capacity
+                    next_state.append(self.memory[index].frame)
+                    next_state_actions[0, offset] = float(self.memory[index].action)
+            
+            # Convert to right tensor format
+            current_state = t.unsqueeze(t.stack(current_state), 0)
+            if not self.memory[i].done:
+                next_state = t.unsqueeze(t.stack(next_state), 0)
+            
+            mini_batch.append(TrainingExample(current_state, current_state_actions, next_state, next_state_actions, self.memory[i].reward, self.memory[i].done))
+
+        return mini_batch
 
 ## Main program
 def main():
