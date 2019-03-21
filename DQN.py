@@ -258,17 +258,17 @@ def main():
     environment.reset()
     
     # Variable assignments
-    learning_rate = 1e-4
+    learning_rate = 1e-2
     gamma = 0.95 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
-    epsilon_decay = 1e-5
+    epsilon_decay = 1e-6
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 35000
-    batch_size = 16
-    trainings_epochs = 100
-    update_target_net = 30
+    memory_capacity = 100000
+    batch_size = 8
+    trainings_epochs = 150
+    update_target_net = 20
     
     q_net = Network(learning_rate, action_space)
     target_net = copy.deepcopy(q_net)
