@@ -80,7 +80,7 @@ class Network(nn.Module):
 
 class Agent(object):
     def __init__(self, gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
-                 action_space, memory_capacity, batch_size, training_epochs,\
+                 action_space, memory_capacity, batch_size, trainings_epochs,\
                  update_target_net, q_net, v_net, target_v_net):
         self.gamma = gamma
         self.epsilon = epsilon
@@ -95,7 +95,7 @@ class Agent(object):
         self.memory = []
         self.memory_index = 0
         self.memory_capacity = memory_capacity
-        self.training_epochs = training_epochs
+        self.trainings_epochs = trainings_epochs
         self.update_target_net = update_target_net
 
         # Declarations
