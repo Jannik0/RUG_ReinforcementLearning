@@ -14,7 +14,7 @@ from collections import namedtuple
 device = t.device("cuda" if t.cuda.is_available() else "cpu")
 
 # Environment
-environment = gym.make('IceHockey-v0')
+environment = gym.make('Breakout-v0')
 
 # frame: observed frame for which action had to be chosen
 # action: action chosen given frame
@@ -178,8 +178,9 @@ class Agent(object):
     def updateNetwork(self):
         
         if len(self.memory) < self.memory_capacity:
-            return
+            return t.zeros(1)
         
+        total_loss = 0.0
         mini_batch = self.constructSample(self.batch_size)
 
         for sample in mini_batch:
@@ -200,6 +201,9 @@ class Agent(object):
             loss = self.q_net.loss(q_values, target_values)
             loss.backward()
             self.q_net.optimizer.step()
+            total_loss += loss
+        
+        return total_loss
     
     # Function to keep current state & current last_actions (multi)set up to date; shall return data to be inserted immediately into network
     # Function appears to work properly!
@@ -222,25 +226,32 @@ class Agent(object):
     
     def train(self):
         target_net_replacement_counter = 0
+        epoch_loss = 0.0
         for epoch in range(self.trainings_epochs):
-            print('Epoch: ', epoch)
+            
             environment.reset()                             # Start new game
             self.constructCurrentStateAndActions(init=True) # Initialize current state and last actions
-            done = False
+            reward, done = 0, False
             accumulated_epoch_reward = 0
+            epoch_loss = 0.0
             
             while not done: #TODO: maybe add max number of rounds
                 self.action = self.chooseAction(self.current_state, self.last_actions)
                 
-                #frame skipping - needs improvement, otherwise network misses rewards to be observed
-                #for skip in range(self.frame_skip_rate):
-                    #environment.step(self.action)
+                reward, done = 0, False
                 
-                _, reward, done, _ = environment.step(self.action)
+                #frame skipping - not perfectly happy with it yet
+                for skip in range(self.frame_skip_rate + 1): #+1 to execute also action really iterested in (k'th action)
+                    _, reward, done, _ = environment.step(self.action)
+                    if not reward == 0 or done:
+                        #print('done! Reward: ', reward)
+                        break 
+                
+                #_, reward, done, _ = environment.step(self.action) # included in loop above
                 
                 self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done)
                 self.constructCurrentStateAndActions()      # Update current state and actions
-                self.updateNetwork()
+                epoch_loss += self.updateNetwork()
                 
                 if target_net_replacement_counter > self.update_target_net:
                     self.target_net = copy.deepcopy(self.q_net)
@@ -250,7 +261,7 @@ class Agent(object):
                 #environment.render()
                 accumulated_epoch_reward += reward
                 
-            print('Reward last epoch: ', accumulated_epoch_reward, ' Epsilon: ', self.epsilon)
+            print('Epoch: ', epoch, ' Reward epoch: ', accumulated_epoch_reward, ' Epsilon: ', self.epsilon, ' Epoch loss: ', epoch_loss.item())
 
 ## Main program
 def main():
@@ -258,19 +269,20 @@ def main():
     environment.reset()
     
     # Variable assignments
-    learning_rate = 1e-2
-    gamma = 0.95 # Discount factor
+    learning_rate = 1e-4
+    gamma = 0.99 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
-    epsilon_decay = 1e-6
+    epsilon_decay = 1e-7
     frame_skip_rate = 3
     action_space = environment.action_space.n
     memory_capacity = 100000
-    batch_size = 8
-    trainings_epochs = 150
-    update_target_net = 20
+    batch_size = 10
+    trainings_epochs = 7000
+    update_target_net = 40
     
     q_net = Network(learning_rate, action_space)
+    target_net = Network(learning_rate, action_space)
     target_net = copy.deepcopy(q_net)
     
     agent = Agent(gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
