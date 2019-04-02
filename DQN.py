@@ -19,10 +19,9 @@ environment = gym.make('Breakout-v0')
 # frame: observed frame for which action had to be chosen
 # action: action chosen given frame
 # reward & done: observed after performance of action at frame
-Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done'))
+# init: is true if corresponding state is a state close to 'after re-initialization' of game; don't start sampling here for training
+Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done', 'init')))
 
-## init: is true if corresponding state is a state close to 'after re-initialization' of game; don't start sampling here for training
-#Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done', 'init')))
 
 # Used for training
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
@@ -140,16 +139,45 @@ class Agent(object):
         else:
             return environment.action_space.sample()
     
+    # Make sure to get a valid index
+    def returnValidWRTInit(self, index): # return valid idx with respect to init-condition (don't access unrelated frames)
+        changed = False
+        if self.memory[index].init:
+            changed = True
+            while self.memory[index].init:
+                index = (index + 1) % self.memory_capacity
+        if changed:
+            return self.returnValidWRTMemIdx(index) # if we changed sth, we can have broken the validity with respect to current memory-index
+        else:
+            return index
+    
+    def returnValidWRTMemIdx(self, index): # return valid idx with respect to current memory-index
+        changed = False
+        if index == self.memory_index: # problem; we don't have a next state for this index yet
+            changed = True
+            while index == self.memory_index:
+                index = np.random.random_integers(low=0, high=len(self.memory)-1, size=1)[0]             # For the current_index we don't have a 'next_state' yet; choose another action
+        if changed:
+            return self.returnValidWRTInit(index) # if we changed sth, we can have broken the validity with respect to init-state-constraint; so check for that
+        else:
+            return index
+    
+    # Make sure all constraints on index are satisfied; return valid index
+    def getValidIndex(self, index): 
+        if not index == self.memory_index and not self.memory[index].init: # then everything's fine...
+            return index
+        index = self.returnValidWRTMemIdx(index)
+        return self.returnValidWRTInit(index)
+    
     # Here the TrainingExample consists of the current frame plus the last three frames and the actions that led to them + the same for the next state
     def constructSample(self, batch_size):
         mini_batch = []
         random_indices = np.random.random_integers(low=0, high=len(self.memory)-1, size=batch_size)  # Number(batch_size) random ints from [low, high)
 
         for i in random_indices:
-            while i == self.memory_index:
-                i = np.random.random_integers(low=0, high=len(self.memory)-1, size=1)[0]             # For the current_index we don't have a 'next_state' yet; choose another action
+            i = self.getValidIndex(i) # make sure index sampled is valid (unequal current memory-index & not one of the first 3 states after reset of env.)
                 
-            # 'TrainingExample' = ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done')
+            # Working with: 'TrainingExample' = ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done', 'init')
             current_state = []
             current_state_actions = t.zeros([1, 3], dtype=t.float32)
             next_state = []
@@ -240,6 +268,10 @@ class Agent(object):
             reward, done = 0, False
             accumulated_epoch_reward = 0
             epoch_loss = 0.0
+            # Instentiate new (init) state in memory
+            self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
+            self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
+            self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
             
             while not done: #TODO: maybe add max number of rounds
                 self.action = self.chooseAction(self.current_state, self.last_actions)
@@ -255,7 +287,7 @@ class Agent(object):
                 
                 #_, reward, done, _ = environment.step(self.action) # included in loop above
                 
-                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done)
+                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, False)
                 self.constructCurrentStateAndActions()      # Update current state and actions
                 epoch_loss += self.updateNetwork()
                 
