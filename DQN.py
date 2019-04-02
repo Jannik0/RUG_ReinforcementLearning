@@ -102,11 +102,14 @@ class Agent(object):
         self.last_actions = None    # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
         self.action = 0             # Most recent action performed; used by self.constructCurrentStateAndActions()
     
-    # Returns tensor of current frame of environment
+    # Returns tensor of current cropped and rescaled frame of environment
     def getGrayscaleFrameTensor(self):
-        image = PIL.Image.fromarray(environment.render(mode='rgb_array'))           # Frame to PIL.Image
+        image = PIL.Image.fromarray(environment.render(mode='rgb_array'))
         image = tv.transforms.functional.to_grayscale(image, num_output_channels=1) # Use torchvision to convert to grayscale
-        image = np.array(image)                                                     # Convert PIL image back to numpy-array
+        image = np.array(image)
+        cropped = image[31:image.shape[0]-20, 7:image.shape[1]-7]                   # crop
+        rescaled = PIL.Image.fromarray(cropped).resize((84,84))                     # resize/rescale to 84x84
+    image = np.array(rescaled)                                                      # Convert PIL image back to numpy-array
         return t.from_numpy(image).type('torch.FloatTensor')                        # Create tensor from numpy array
     
     # Here the experience only consists of the current frame and the action taken in that frame
