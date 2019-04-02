@@ -299,7 +299,7 @@ class Agent(object):
                 
                 #environment.render()
                 
-            print('Epoch: ', epoch, ' Reward epoch: ', accumulated_epoch_reward, ' Epsilon: ', self.epsilon, ' Epoch loss: ', epoch_loss.item())
+            print(epoch, ';', accumulated_epoch_reward, ';', self.epsilon, ';', epoch_loss.item()) # make it easier for conversion to csv later
 
 ## Main program
 def main():
@@ -314,7 +314,7 @@ def main():
     epsilon_decay = 1e-6
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 120
+    memory_capacity = 120000
     batch_size = 10
     trainings_epochs = 23000
     update_target_net = 40
