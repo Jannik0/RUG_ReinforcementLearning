@@ -21,6 +21,9 @@ environment = gym.make('Breakout-v0')
 # reward & done: observed after performance of action at frame
 Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done'))
 
+## init: is true if corresponding state is a state close to 'after re-initialization' of game; don't start sampling here for training
+#Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done', 'init')))
+
 # Used for training
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
@@ -61,12 +64,12 @@ class Network(nn.Module):
 
     def computeConvOutputDim(self): #works!
         # width
-        width = self.computeOutputDimensionConvLayer(in_dim=160, kernel_size=8, padding=0, stride=4)        #conv1
+        width = self.computeOutputDimensionConvLayer(in_dim=84, kernel_size=8, padding=0, stride=4)         #conv1
         width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2)      #conv2
         width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=2, padding=0, stride=1)      #conv3
         
         # height
-        height = self.computeOutputDimensionConvLayer(in_dim=210, kernel_size=8, padding=0, stride=4)       #conv1
+        height = self.computeOutputDimensionConvLayer(in_dim=84, kernel_size=8, padding=0, stride=4)        #conv1
         height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2)    #conv2
         height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=2, padding=0, stride=1)    #conv3
         
@@ -109,7 +112,7 @@ class Agent(object):
         image = np.array(image)
         cropped = image[31:image.shape[0]-20, 7:image.shape[1]-7]                   # crop
         rescaled = PIL.Image.fromarray(cropped).resize((84,84))                     # resize/rescale to 84x84
-    image = np.array(rescaled)                                                      # Convert PIL image back to numpy-array
+        image = np.array(rescaled)                                                  # Convert PIL image back to numpy-array
         return t.from_numpy(image).type('torch.FloatTensor')                        # Create tensor from numpy array
     
     # Here the experience only consists of the current frame and the action taken in that frame
@@ -272,16 +275,16 @@ def main():
     environment.reset()
     
     # Variable assignments
-    learning_rate = 1e-4
-    gamma = 0.99 # Discount factor
+    learning_rate = 1e-5
+    gamma = 0.95 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
-    epsilon_decay = 1e-7
+    epsilon_decay = 1e-6
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 100000
+    memory_capacity = 120000
     batch_size = 10
-    trainings_epochs = 7000
+    trainings_epochs = 23000
     update_target_net = 40
     
     q_net = Network(learning_rate, action_space)
