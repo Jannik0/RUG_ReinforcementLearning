@@ -20,7 +20,7 @@ environment = gym.make('Breakout-v0')
 # action: action chosen given frame
 # reward & done: observed after performance of action at frame
 # init: is true if corresponding state is a state close to 'after re-initialization' of game; don't start sampling here for training
-Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done', 'init')))
+Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done', 'init'))
 
 
 # Used for training
@@ -166,8 +166,11 @@ class Agent(object):
     def getValidIndex(self, index): 
         if not index == self.memory_index and not self.memory[index].init: # then everything's fine...
             return index
+        #print('Index to be checked cause of problem: ', index, ' Current mem-index: ', self.memory_index, ' Is init conflict? ', self.memory[index].init)
         index = self.returnValidWRTMemIdx(index)
-        return self.returnValidWRTInit(index)
+        index = self.returnValidWRTInit(index)
+        #print('Corrected index: ', index, ' Current mem-index: ', self.memory_index, ' Is init conflict? ', self.memory[index].init)
+        return index
     
     # Here the TrainingExample consists of the current frame plus the last three frames and the actions that led to them + the same for the next state
     def constructSample(self, batch_size):
@@ -283,7 +286,7 @@ class Agent(object):
                     _, reward, done, _ = environment.step(self.action)
                     if not reward == 0 or done:
                         #print('done! Reward: ', reward)
-                        break 
+                        break   
                 
                 #_, reward, done, _ = environment.step(self.action) # included in loop above
                 
@@ -314,7 +317,7 @@ def main():
     epsilon_decay = 1e-6
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 120000
+    memory_capacity = 120
     batch_size = 10
     trainings_epochs = 23000
     update_target_net = 40
