@@ -276,21 +276,19 @@ class Agent(object):
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
             
-            while not done: #TODO: maybe add max number of rounds
+            while not done:
                 self.action = self.chooseAction(self.current_state, self.last_actions)
                 
                 reward, done = 0, False
                 
-                #frame skipping - not perfectly happy with it yet
-                for skip in range(self.frame_skip_rate + 1): #+1 to execute also action really iterested in (k'th action)
+                #TODO: frame skipping - might need double check
+                for skip in range(self.frame_skip_rate + 1): #+1 to execute also action really iterested in (k'th action itself)
                     _, reward, done, _ = environment.step(self.action)
-                    if not reward == 0 or done:
-                        #print('done! Reward: ', reward)
-                        break   
+                    accumulated_epoch_reward += reward # don't miss skipped rewards when constructing sample for memory later
+                    if done: # game over.
+                        break
                 
-                #_, reward, done, _ = environment.step(self.action) # included in loop above
-                
-                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, False)
+                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, accumulated_epoch_reward, done, False)
                 self.constructCurrentStateAndActions()      # Update current state and actions
                 epoch_loss += self.updateNetwork()
                 
@@ -300,7 +298,6 @@ class Agent(object):
                 target_net_replacement_counter += 1
                 
                 #environment.render()
-                accumulated_epoch_reward += reward
                 
             print('Epoch: ', epoch, ' Reward epoch: ', accumulated_epoch_reward, ' Epsilon: ', self.epsilon, ' Epoch loss: ', epoch_loss.item())
 
