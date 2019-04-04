@@ -1,3 +1,4 @@
+import os
 import gym
 import PIL
 import copy
@@ -103,6 +104,38 @@ class Agent(object):
         self.current_state = None   # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
         self.last_actions = None    # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
         self.action = 0             # Most recent action performed; used by self.constructCurrentStateAndActions()
+    
+    ### Saving & Loading
+    def save_model(self, model, PATH = './Models'):
+        
+        # Make sure path exists
+        if not os.path.exists(PATH): 
+            os.makedirs(PATH)
+        print('Saving model.')
+        
+        # Init model path & name
+        PATH = PATH + '/resulting_model'
+        addition = '_1'
+        extension = '.pt'
+        
+        # Make sure not to overwrite existing model
+        while os.path.exists(PATH + extension):
+            PATH = PATH + addition
+        
+        PATH = PATH + extension # add extension
+        
+        t.save(model.state_dict(), PATH) # Save
+        print('Saved model to: ', PATH)
+
+    def load_model(self, model, PATH = './Models/resulting_model.pt'): # A common PyTorch convention is to save models using either a .pt or .pth file extension.
+        if os.path.exists(PATH):
+            print('Loading model: ' + PATH)
+            model.load_state_dict(t.load(PATH))
+            print('Loading model finished sucessfully.')
+        else:
+            print('No model loaded.')     
+        return model 
+
     
     # Returns tensor of current cropped and rescaled frame of environment
     def getGrayscaleFrameTensor(self):
@@ -300,7 +333,7 @@ class Agent(object):
                 #environment.render()
                 
             print(epoch, ';', accumulated_epoch_reward, ';', self.epsilon, ';', epoch_loss.item()) # make it easier for conversion to csv later
-
+        
 ## Main program
 def main():
     print('Hello world!')
@@ -311,7 +344,7 @@ def main():
     gamma = 0.95 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
-    epsilon_decay = 1e-6
+    epsilon_decay = 5e-7
     frame_skip_rate = 3
     action_space = environment.action_space.n
     memory_capacity = 120000
@@ -327,7 +360,9 @@ def main():
                   action_space, memory_capacity, batch_size, trainings_epochs,\
                   update_target_net, q_net, target_net)
                  
+    #agent.q_net = agent.load_model(agent.q_net) # If no model can be loaded, it returns given one
     agent.train()
+    agent.save_model(agent.q_net)
     
 if __name__ == "__main__": # Call main function
     main()
