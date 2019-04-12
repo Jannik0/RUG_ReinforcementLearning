@@ -1,7 +1,9 @@
 import os
+import sys
 import gym
 import PIL
 import copy
+import time
 import numpy as np
 import torch as t
 import torch.nn as nn
@@ -84,7 +86,7 @@ class Network(nn.Module):
 class Agent(object):
     def __init__(self, gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
                  action_space, memory_capacity, batch_size, trainings_epochs,\
-                 update_target_net, q_net, target_net):
+                 update_target_net, q_net, target_net, play_games):
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -99,6 +101,7 @@ class Agent(object):
         self.memory_capacity = memory_capacity
         self.trainings_epochs = trainings_epochs
         self.update_target_net = update_target_net
+        self.play_games = play_games
         
         # Declarations
         self.current_state = None   # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
@@ -130,7 +133,7 @@ class Agent(object):
     def load_model(self, model, PATH = './Models/resulting_model.pt'): # A common PyTorch convention is to save models using either a .pt or .pth file extension.
         if os.path.exists(PATH):
             print('Loading model: ' + PATH)
-            model.load_state_dict(t.load(PATH))
+            model.load_state_dict(t.load(PATH,map_location=device))
             print('Loading model finished sucessfully.')
         else:
             print('No model loaded.')     
@@ -171,6 +174,12 @@ class Agent(object):
             return action.item()
         else:
             return environment.action_space.sample()
+    
+    def chooseActionPlayingMode(self, state, actions):
+        q_values = self.q_net(state.to(device), actions.to(device))
+        squeezed_q_values = t.squeeze(q_values)
+        reward, action = squeezed_q_values.max(0)
+        return action.item()
     
     # Make sure to get a valid index
     def returnValidWRTInit(self, index): # return valid idx with respect to init-condition (don't access unrelated frames)
@@ -334,8 +343,46 @@ class Agent(object):
                 
             print(epoch, ';', accumulated_epoch_reward, ';', self.epsilon, ';', epoch_loss.item()) # make it easier for conversion to csv later
         
+        
+    def play(self):
+        self.epsilon = 0.1 # no extensive exploration in playing mode
+        target_net_replacement_counter = 0
+        epoch_loss = 0.0
+        for game in range(self.play_games):
+            
+            environment.reset()                             # Start new game
+            self.constructCurrentStateAndActions(init=True) # Initialize current state and last actions
+            reward, done = 0, False
+            accumulated_epoch_reward = 0
+            epoch_loss = 0.0
+            # Instentiate new (init) state in memory
+            self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
+            self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
+            self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
+            
+            while not done:
+                self.action = self.chooseAction(self.current_state, self.last_actions) #chooseActionPlayingMode as an alternative (purely greedy based one)
+                print('Action: ', self.action)
+                reward, done = 0, False
+                
+                #TODO: frame skipping - might need double check
+                for skip in range(3 + 1): #+1 to execute also action really iterested in (k'th action itself)
+                    _, reward, done, _ = environment.step(self.action)
+                    accumulated_epoch_reward += reward # don't miss skipped rewards when constructing sample for memory later
+                    if done: # game over.
+                        break
+                
+                self.constructCurrentStateAndActions()      # Update current state and actions
+                
+                environment.render()
+                time.sleep(0.5)
+                  
+            print('Epoch: ', game, '; Epoch-Reward', accumulated_epoch_reward, '; Epsilon', self.epsilon)
+        
+        
 ## Main program
 def main():
+    
     print('Hello world!')
     environment.reset()
     
@@ -351,6 +398,10 @@ def main():
     batch_size = 10
     trainings_epochs = 23000
     update_target_net = 40
+    if len(sys.argv) == 2:
+        play_games = int(sys.argv[1])
+    else:
+        play_games = 0
     
     q_net = Network(learning_rate, action_space)
     target_net = Network(learning_rate, action_space)
@@ -358,11 +409,16 @@ def main():
     
     agent = Agent(gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
                   action_space, memory_capacity, batch_size, trainings_epochs,\
-                  update_target_net, q_net, target_net)
+                  update_target_net, q_net, target_net, play_games)
                  
     #agent.q_net = agent.load_model(agent.q_net) # If no model can be loaded, it returns given one
-    agent.train()
-    agent.save_model(agent.q_net)
+    if len(sys.argv) == 2:
+        print('Welcome to playing mode! Selected number of games: ', play_games)
+        agent.load_model(q_net)
+        agent.play()
+    else:
+        agent.train()
+        agent.save_model(agent.q_net)
     
 if __name__ == "__main__": # Call main function
     main()
