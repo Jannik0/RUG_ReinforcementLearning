@@ -349,7 +349,7 @@ def main():
     action_space = environment.action_space.n
     memory_capacity = 120000
     batch_size = 10
-    trainings_epochs = 23000
+    trainings_epochs = 25000
     update_target_net = 40
     
     q_net = Network(learning_rate, action_space)
