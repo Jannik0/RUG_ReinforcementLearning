@@ -29,21 +29,31 @@ Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done', 'ini
 # Used for training
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
+#TODO: 
+# CHeck target net copy
+# Remove one conv layer
+# Try lower learning rate
+# Larger memory
+# Larger eps-decay
+# Different loss function?
+# Balance eps decay
+# Lower eps min?
+
 class Network(nn.Module):
     def __init__(self, learning_rate, action_space):
         super(Network, self).__init__()
         
         self.flattened_size = self.computeConvOutputDim()
 
-        self.conv1 = nn.Conv2d(in_channels=4, out_channels=16, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=2, stride=1)
+        self.conv1 = nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
         
-        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=256) # +3 for 3 actions to be added
-        self.fc2 = nn.Linear(in_features=256, out_features=action_space)
+        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=512) # +3 for 3 actions to be added
+        self.fc2 = nn.Linear(in_features=512, out_features=action_space)
 
-        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
-        self.loss = funct.smooth_l1_loss
+        self.optimizer = optim.RMSprop(self.parameters(), lr=learning_rate)
+        self.loss = nn.MSELoss()
 
         self.to(device)
     
@@ -53,7 +63,7 @@ class Network(nn.Module):
         if not previous_actions.is_cuda:
             previous_actions.to(device)
         
-        observation = funct.relu(self.conv1(observation))
+        observation = funct.relu(self.conv1(observation)) #TODO: right relu?
         observation = funct.relu(self.conv2(observation))
         observation = funct.relu(self.conv3(observation))
         
@@ -68,12 +78,12 @@ class Network(nn.Module):
         # width
         width = self.computeOutputDimensionConvLayer(in_dim=84, kernel_size=8, padding=0, stride=4)         #conv1
         width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2)      #conv2
-        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=2, padding=0, stride=1)      #conv3
+        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=3, padding=0, stride=1)      #conv3
         
         # height
         height = self.computeOutputDimensionConvLayer(in_dim=84, kernel_size=8, padding=0, stride=4)        #conv1
         height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2)    #conv2
-        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=2, padding=0, stride=1)    #conv3
+        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=3, padding=0, stride=1)    #conv3
         
         # width * height * out_channels
         flattened_size = width * height * 64
@@ -86,7 +96,7 @@ class Network(nn.Module):
 class Agent(object):
     def __init__(self, gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
                  action_space, memory_capacity, batch_size, trainings_epochs,\
-                 update_target_net, q_net, target_net, play_games):
+                 update_target_net, q_net, target_net, play_games, start_learning_mem_size):
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -102,6 +112,7 @@ class Agent(object):
         self.trainings_epochs = trainings_epochs
         self.update_target_net = update_target_net
         self.play_games = play_games
+        self.start_learning_mem_size = start_learning_mem_size
         
         # Declarations
         self.current_state = None   # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
@@ -256,7 +267,7 @@ class Agent(object):
     # Target values dimensionality shall be right, since it has to match dimensionality of q-values returned from net
     def updateNetwork(self):
         
-        if len(self.memory) < self.memory_capacity:
+        if len(self.memory) < self.start_learning_mem_size:
             return t.zeros(1)
         
         total_loss = 0.0
@@ -306,6 +317,7 @@ class Agent(object):
     def train(self):
         target_net_replacement_counter = 0
         epoch_loss = 0.0
+        frame_counter = 0
         for epoch in range(self.trainings_epochs):
             
             environment.reset()                             # Start new game
@@ -326,6 +338,14 @@ class Agent(object):
                 #TODO: frame skipping - might need double check
                 for skip in range(self.frame_skip_rate + 1): #+1 to execute also action really iterested in (k'th action itself)
                     _, reward, done, _ = environment.step(self.action)
+                    
+                    frame_counter += 1
+                    # Clipping
+                    if reward < 0:
+                        reward = -1
+                    elif reward > 0:
+                        reward = 1
+                        
                     accumulated_epoch_reward += reward # don't miss skipped rewards when constructing sample for memory later
                     if done: # game over.
                         break
@@ -334,15 +354,17 @@ class Agent(object):
                 self.constructCurrentStateAndActions()      # Update current state and actions
                 epoch_loss += self.updateNetwork()
                 
+                #TODO test
                 if target_net_replacement_counter > self.update_target_net:
                     self.target_net = copy.deepcopy(self.q_net)
                     target_net_replacement_counter = target_net_replacement_counter % self.update_target_net
+                    #print('Equal?: ', t.all(t.eq(self.q_net.parameters, self.target_net.parameters)))
                 target_net_replacement_counter += 1
                 
                 #environment.render()
                 
             print(epoch, ';', accumulated_epoch_reward, ';', self.epsilon, ';', epoch_loss.item()) # make it easier for conversion to csv later
-        
+            print('Frame counter: ', frame_counter)
         
     def play(self):
         self.epsilon = 0.1 # no extensive exploration in playing mode
@@ -387,17 +409,18 @@ def main():
     environment.reset()
     
     # Variable assignments
-    learning_rate = 1e-5
-    gamma = 0.95 # Discount factor
+    learning_rate = 0.00025
+    gamma = 0.99 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
-    epsilon_decay = 5e-7
+    epsilon_decay = 5e-6
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 120000
-    batch_size = 10
-    trainings_epochs = 23000
-    update_target_net = 40
+    memory_capacity = 1000000
+    batch_size = 20
+    trainings_epochs = 10000
+    update_target_net = 40 # roughly similar to value in paper (for Breakout)
+    start_learning_mem_size = memory_capacity #50000
     if len(sys.argv) == 2:
         play_games = int(sys.argv[1])
     else:
@@ -409,7 +432,7 @@ def main():
     
     agent = Agent(gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
                   action_space, memory_capacity, batch_size, trainings_epochs,\
-                  update_target_net, q_net, target_net, play_games)
+                  update_target_net, q_net, target_net, play_games, start_learning_mem_size)
                  
     #agent.q_net = agent.load_model(agent.q_net) # If no model can be loaded, it returns given one
     if len(sys.argv) == 2:
