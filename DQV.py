@@ -208,7 +208,7 @@ class Agent(object):
 
             self.v_net.optimizer.zero_grad()
             loss = self.v_net.loss(v_value, max_future_reward)      # TODO: custom loss (maybe)
-            loss.backward()
+            loss.backward(retain_graph=True)
             self.v_net.optimizer.step()
 
     

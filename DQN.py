@@ -310,9 +310,9 @@ class Agent(object):
             
             environment.reset()                             # Start new game
             self.constructCurrentStateAndActions(init=True) # Initialize current state and last actions
-            reward, done = 0, False
-            accumulated_epoch_reward = 0
-            epoch_loss = 0.0
+            reward, done, self.action = 0, False, 0
+            accumulated_epoch_reward, epoch_loss = 0, 0.0
+            
             # Instentiate new (init) state in memory
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
