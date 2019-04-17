@@ -38,12 +38,11 @@ class Network(nn.Module):
         
         self.flattened_size = self.computeConvOutputDim()
 
-        self.conv1 = nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
+        self.conv1 = nn.Conv2d(in_channels=4, out_channels=16, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
         
-        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=512) # +3 for 3 actions to be added
-        self.fc2 = nn.Linear(in_features=512, out_features=action_space)
+        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=256) # +3 for 3 actions to be added
+        self.fc2 = nn.Linear(in_features=256, out_features=action_space)
 
         self.optimizer = optim.RMSprop(self.parameters(), lr=learning_rate)
         self.loss = nn.MSELoss()
@@ -58,7 +57,6 @@ class Network(nn.Module):
         
         observation = funct.relu(self.conv1(observation)) #TODO: right relu?
         observation = funct.relu(self.conv2(observation))
-        observation = funct.relu(self.conv3(observation))
         
         observation = observation.view(1, self.flattened_size)  # view works directly on tensors
         observation = t.cat((previous_actions, observation), 1) # concatenates tensors (actions, conv-output)
@@ -71,15 +69,13 @@ class Network(nn.Module):
         # width
         width = self.computeOutputDimensionConvLayer(in_dim=84, kernel_size=8, padding=0, stride=4)         #conv1
         width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2)      #conv2
-        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=3, padding=0, stride=1)      #conv3
         
         # height
         height = self.computeOutputDimensionConvLayer(in_dim=84, kernel_size=8, padding=0, stride=4)        #conv1
         height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2)    #conv2
-        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=3, padding=0, stride=1)    #conv3
         
         # width * height * out_channels
-        flattened_size = width * height * 64
+        flattened_size = width * height * 32
         
         return flattened_size
 
@@ -385,8 +381,6 @@ class Agent(object):
                 #print('After')
                 #self.compareModelsForEquality()
                 
-                #environment.render()
-                
             print(epoch, ';', accumulated_epoch_reward, ';', self.epsilon, ';', epoch_loss.item()) # make it easier for conversion to csv later
             self.writeLog(epoch, update_counter, accumulated_epoch_reward, self.epsilon, epoch_loss.item())
             epoch += 1 
@@ -461,7 +455,9 @@ def main():
     
     # Training vs playing 
     if len(sys.argv) == 2:
-        play_games = int(sys.argv[1])
+        print('Playing mode out of order. Bye!')
+        return
+        #play_games = int(sys.argv[1])
     else:
         play_games = 0
     
