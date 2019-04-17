@@ -119,6 +119,28 @@ class Agent(object):
         self.last_actions = None    # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
         self.action = 0             # Most recent action performed; used by self.constructCurrentStateAndActions()
     
+    def compareModelsForEquality(self, network1=None, network2=None):
+        n1, n2 = None, None
+        if not (network1 is None or network2 is None):
+            n1 = network1
+            n2 = network2
+        else:
+            n1 = self.q_net
+            n2 = self.target_net
+        
+        # Create list of tuples: <layer_name, weight_or_bias_tensor>
+        n1 = list(n1.state_dict().items())
+        n2 = list(n2.state_dict().items())
+        
+        #print(agent.q_net.state_dict().items())
+        if (len(n1) == len(n2)):
+            for idx in range(len(n1)):
+                print('Type: ', n1[idx][0], '\tEqual in both networks: ', 'True' if t.all(t.eq(n1[idx][1], n2[idx][1])) else 'False')
+        else:
+            print('Networks don\'t match.')
+            
+        
+    
     ### Saving & Loading
     def save_model(self, model, PATH = './Models'):
         
@@ -315,6 +337,7 @@ class Agent(object):
             self.last_actions[0, 0] = self.action
     
     def train(self):
+        self.compareModelsForEquality() # initial test
         target_net_replacement_counter = 0
         epoch_loss = 0.0
         frame_counter = 0
@@ -354,12 +377,17 @@ class Agent(object):
                 self.constructCurrentStateAndActions()      # Update current state and actions
                 epoch_loss += self.updateNetwork()
                 
-                #TODO test
+                #Before test
+                #print('Before')
+                #self.compareModelsForEquality()
                 if target_net_replacement_counter > self.update_target_net:
+                    #print('UPDATING TARGET NET!')
                     self.target_net = copy.deepcopy(self.q_net)
-                    target_net_replacement_counter = target_net_replacement_counter % self.update_target_net
-                    #print('Equal?: ', t.all(t.eq(self.q_net.parameters, self.target_net.parameters)))
+                    target_net_replacement_counter = target_net_replacement_counter % self.update_target_net   
                 target_net_replacement_counter += 1
+                #After test
+                #print('After')
+                #self.compareModelsForEquality()
                 
                 #environment.render()
                 
@@ -416,7 +444,7 @@ def main():
     epsilon_decay = 5e-6
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 1000000
+    memory_capacity = 100
     batch_size = 20
     trainings_epochs = 10000
     update_target_net = 40 # roughly similar to value in paper (for Breakout)
@@ -435,13 +463,17 @@ def main():
                   update_target_net, q_net, target_net, play_games, start_learning_mem_size)
                  
     #agent.q_net = agent.load_model(agent.q_net) # If no model can be loaded, it returns given one
+    
     if len(sys.argv) == 2:
         print('Welcome to playing mode! Selected number of games: ', play_games)
         agent.load_model(q_net)
         agent.play()
     else:
+        print('Init test')
+        #agent.compareModelsForEquality()
         agent.train()
         agent.save_model(agent.q_net)
+        print('...')
     
 if __name__ == "__main__": # Call main function
     main()
