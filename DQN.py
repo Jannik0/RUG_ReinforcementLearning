@@ -29,15 +29,6 @@ Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done', 'ini
 # Used for training
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
-#TODO: 
-# CHeck target net copy
-# Remove one conv layer
-# Try lower learning rate
-# Larger memory
-# Larger eps-decay
-# Different loss function?
-# Balance eps decay
-# Lower eps min?
 
 class Network(nn.Module):
     def __init__(self, learning_rate, action_space):
@@ -337,6 +328,7 @@ class Agent(object):
             self.last_actions[0, 0] = self.action
     
     def train(self):
+        print('Init test')
         self.compareModelsForEquality() # initial test
         target_net_replacement_counter = 0
         epoch_loss = 0.0
@@ -377,15 +369,16 @@ class Agent(object):
                 self.constructCurrentStateAndActions()      # Update current state and actions
                 epoch_loss += self.updateNetwork()
                 
-                #Before test
+                # Before test
                 #print('Before')
                 #self.compareModelsForEquality()
-                if target_net_replacement_counter > self.update_target_net:
-                    #print('UPDATING TARGET NET!')
+                target_net_replacement_counter += 1
+                #print('Replacement Counter: ', target_net_replacement_counter)
+                if target_net_replacement_counter == self.update_target_net:
+                    #print('UPDATING TARGET NET! Replacement Counter: ', target_net_replacement_counter)
                     self.target_net = copy.deepcopy(self.q_net)
                     target_net_replacement_counter = target_net_replacement_counter % self.update_target_net   
-                target_net_replacement_counter += 1
-                #After test
+                # After test
                 #print('After')
                 #self.compareModelsForEquality()
                 
@@ -441,13 +434,13 @@ def main():
     gamma = 0.99 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
-    epsilon_decay = 5e-6
+    epsilon_decay = 1e-6
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 100
+    memory_capacity = 1000000
     batch_size = 20
     trainings_epochs = 10000
-    update_target_net = 40 # roughly similar to value in paper (for Breakout)
+    update_target_net = 10000
     start_learning_mem_size = memory_capacity #50000
     if len(sys.argv) == 2:
         play_games = int(sys.argv[1])
@@ -469,8 +462,6 @@ def main():
         agent.load_model(q_net)
         agent.play()
     else:
-        print('Init test')
-        #agent.compareModelsForEquality()
         agent.train()
         agent.save_model(agent.q_net)
         print('...')
