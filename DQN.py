@@ -50,12 +50,13 @@ class Network(nn.Module):
         self.to(device)
     
     def forward(self, observation, previous_actions): #works!
+        print(observation[:,0:4,:,:].shape)
         if not observation.is_cuda:
             observation.to(device)
         if not previous_actions.is_cuda:
             previous_actions.to(device)
         
-        observation = funct.relu(self.conv1(observation)) #TODO: right relu?
+        observation = funct.relu(self.conv1(observation )) #TODO: right relu?
         observation = funct.relu(self.conv2(observation))
         
         observation = observation.view(1, self.flattened_size)  # view works directly on tensors
@@ -347,7 +348,6 @@ class Agent(object):
                 
                 reward, skipping_reward, done = 0, 0, False
                 
-                #TODO: frame skipping - might need double check
                 for skip in range(self.frame_skip_rate + 1): #+1 to execute also action really iterested in (k'th action itself)
                     _, reward, done, _ = environment.step(self.action)
                     
@@ -427,7 +427,7 @@ def main():
     epsilon_decay = (1-0.1)/1000000 # as proposed in paper by Ameln
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 1000000
+    memory_capacity = 100
     batch_size = 32
     trainings_updates = 2000000
     update_target_net = 10000
