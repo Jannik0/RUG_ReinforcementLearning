@@ -50,13 +50,13 @@ class Network(nn.Module):
         self.to(device)
     
     def forward(self, observation, previous_actions): #works!
-        print(observation[:,0:4,:,:].shape)
+        #print(observation[:,0:4,:,:].shape)
         if not observation.is_cuda:
             observation.to(device)
         if not previous_actions.is_cuda:
             previous_actions.to(device)
         
-        observation = funct.relu(self.conv1(observation )) #TODO: right relu?
+        observation = funct.relu(self.conv1(observation)) #TODO: right relu?
         observation = funct.relu(self.conv2(observation))
         
         observation = observation.view(1, self.flattened_size)  # view works directly on tensors
@@ -284,7 +284,8 @@ class Agent(object):
         
         total_loss = 0.0
         mini_batch = self.constructSample(self.batch_size)
-
+        self.q_net.optimizer.zero_grad()
+        
         for sample in mini_batch:
             q_values = self.q_net(sample.current_state.to(device), sample.current_state_actions.to(device))
             
@@ -298,14 +299,21 @@ class Agent(object):
 
             target_values = q_values.clone()
             target_values[0, int(sample.next_state_actions[0, 0])] = max_future_reward
-
-            self.q_net.optimizer.zero_grad()
+            
+            #self.q_net.optimizer.zero_grad()
             loss = self.q_net.loss(q_values, target_values)
             loss.backward()
-            self.q_net.optimizer.step()
+            #self.q_net.optimizer.step()
             total_loss += loss
         
-        return total_loss
+        # Averaging
+        for p in self.q_net.parameters():
+            p.grad /= self.batch_size
+        
+        # Apply update
+        self.q_net.optimizer.step()
+        
+        return total_loss / self.batch_size # Avg loss
     
     # Function to keep current state & current last_actions (multi)set up to date; shall return data to be inserted immediately into network
     # Function appears to work properly!
@@ -427,7 +435,7 @@ def main():
     epsilon_decay = (1-0.1)/1000000 # as proposed in paper by Ameln
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 100
+    memory_capacity = 1000000
     batch_size = 32
     trainings_updates = 2000000
     update_target_net = 10000
