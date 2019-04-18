@@ -106,7 +106,7 @@ class Agent(object):
         self.model_name = model_name
         self.csv_name = csv_name
         self.save_path = save_path
-        self.end_time = datetime.datetime.fromtimestamp(time.mktime(start_time)) + datetime.timedelta(days=3) - datetime.timedelta(minutes=1) # 1 min for saving & terminating
+        self.end_time = datetime.datetime.fromtimestamp(time.mktime(start_time)) + datetime.timedelta(days=3) - datetime.timedelta(minutes=2) # 2 min for saving & terminating
         print('Max termination time: ', self.end_time)
         
         # Declarations
@@ -127,7 +127,7 @@ class Agent(object):
         n1 = list(n1.state_dict().items())
         n2 = list(n2.state_dict().items())
         
-        #print(agent.q_net.state_dict().items())
+        # Check for equality of parameters
         if (len(n1) == len(n2)):
             for idx in range(len(n1)):
                 print('Type: ', n1[idx][0], '\tEqual in both networks: ', 'True' if t.all(t.eq(n1[idx][1], n2[idx][1])) else 'False')
@@ -326,8 +326,6 @@ class Agent(object):
             self.last_actions[0, 0] = self.action
     
     def train(self):
-        #print('Init test')
-        #self.compareModelsForEquality() # initial test
         target_net_replacement_counter = 0
         epoch_loss = 0.0
         epoch, update_counter = 0, 0
@@ -347,7 +345,7 @@ class Agent(object):
             while not done and update_counter < self.max_updates and datetime.datetime.fromtimestamp(time.time()) < self.end_time:
                 self.action = self.chooseAction(self.current_state, self.last_actions)
                 
-                reward, done = 0, False
+                reward, skipping_reward, done = 0, 0, False
                 
                 #TODO: frame skipping - might need double check
                 for skip in range(self.frame_skip_rate + 1): #+1 to execute also action really iterested in (k'th action itself)
@@ -359,27 +357,21 @@ class Agent(object):
                     elif reward > 0:
                         reward = 1
                         
-                    accumulated_epoch_reward += reward # don't miss skipped rewards when constructing sample for memory later
+                    skipping_reward += reward # don't miss skipped rewards when constructing sample for memory later
                     if done: # game over.
                         break
                 
-                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, accumulated_epoch_reward, done, False)
+                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, skipping_reward, done, False)
                 self.constructCurrentStateAndActions()      # Update current state and actions
                 epoch_loss += self.updateNetwork()
                 update_counter += 1 if not epoch_loss == 0.0  else 0
                 
-                # Before test
-                #print('Before')
-                #self.compareModelsForEquality()
+                accumulated_epoch_reward += skipping_reward
+                
                 target_net_replacement_counter += 1
-                #print('Replacement Counter: ', target_net_replacement_counter)
                 if target_net_replacement_counter == self.update_target_net:
-                    #print('UPDATING TARGET NET! Replacement Counter: ', target_net_replacement_counter)
                     self.target_net = copy.deepcopy(self.q_net)
                     target_net_replacement_counter = target_net_replacement_counter % self.update_target_net   
-                # After test
-                #print('After')
-                #self.compareModelsForEquality()
                 
             print(epoch, ';', accumulated_epoch_reward, ';', self.epsilon, ';', epoch_loss.item()) # make it easier for conversion to csv later
             self.writeLog(epoch, update_counter, accumulated_epoch_reward, self.epsilon, epoch_loss.item())
@@ -435,7 +427,7 @@ def main():
     epsilon_decay = (1-0.1)/1000000 # as proposed in paper by Ameln
     frame_skip_rate = 3
     action_space = environment.action_space.n
-    memory_capacity = 1000
+    memory_capacity = 1000000
     batch_size = 32
     trainings_updates = 2000000
     update_target_net = 10000
