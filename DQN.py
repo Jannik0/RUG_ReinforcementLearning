@@ -2,8 +2,10 @@ import os
 import sys
 import gym
 import PIL
+import csv
 import copy
 import time
+import datetime
 import numpy as np
 import torch as t
 import torch.nn as nn
@@ -47,6 +49,7 @@ class Network(nn.Module):
         self.to(device)
     
     def forward(self, observation, previous_actions): #works!
+        #print(observation[:,0:4,:,:].shape)
         if not observation.is_cuda:
             observation.to(device)
         if not previous_actions.is_cuda:
@@ -81,8 +84,9 @@ class Network(nn.Module):
 
 class Agent(object):
     def __init__(self, gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
-                 action_space, memory_capacity, batch_size, trainings_epochs,\
-                 update_target_net, q_net, target_net, play_games, start_learning_mem_size):
+                 action_space, memory_capacity, batch_size, max_updates,\
+                 update_target_net, q_net, target_net, play_games, start_learning_mem_size,\
+                 model_name, csv_name, save_path, start_time):
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -95,37 +99,52 @@ class Agent(object):
         self.memory = []
         self.memory_index = 0
         self.memory_capacity = memory_capacity
-        self.trainings_epochs = trainings_epochs
+        self.max_updates = max_updates
         self.update_target_net = update_target_net
-        self.play_games = play_games
+        self.play_games = play_games # for playing mode
         self.start_learning_mem_size = start_learning_mem_size
+        self.model_name = model_name
+        self.csv_name = csv_name
+        self.save_path = save_path
+        self.end_time = datetime.datetime.fromtimestamp(time.mktime(start_time)) + datetime.timedelta(days=3) - datetime.timedelta(minutes=2) # 2 min for saving & terminating
+        print('Max termination time: ', self.end_time)
         
         # Declarations
         self.current_state = None   # Tensor of current state(=4 most recent frames); to be updated by self.constructCurrentStateAndActions()
         self.last_actions = None    # Tensor of last 3 actions; to be updated by self.constructCurrentStateAndActions()
         self.action = 0             # Most recent action performed; used by self.constructCurrentStateAndActions()
     
-    ### Saving & Loading
-    def save_model(self, model, PATH = './Models'):
+    def compareModelsForEquality(self, network1=None, network2=None):
+        n1, n2 = None, None
+        if not (network1 is None or network2 is None):
+            n1 = network1
+            n2 = network2
+        else:
+            n1 = self.q_net
+            n2 = self.target_net
         
-        # Make sure path exists
-        if not os.path.exists(PATH): 
-            os.makedirs(PATH)
+        # Create list of tuples: <layer_name, weight_or_bias_tensor>
+        n1 = list(n1.state_dict().items())
+        n2 = list(n2.state_dict().items())
+        
+        # Check for equality of parameters
+        if (len(n1) == len(n2)):
+            for idx in range(len(n1)):
+                print('Type: ', n1[idx][0], '\tEqual in both networks: ', 'True' if t.all(t.eq(n1[idx][1], n2[idx][1])) else 'False')
+        else:
+            print('Networks don\'t match.')
+            
+        
+    
+    ### Saving & Loading
+    def save_model(self, model):
         print('Saving model.')
         
         # Init model path & name
-        PATH = PATH + '/resulting_model'
-        addition = '_1'
-        extension = '.pt'
+        model_name_path = self.save_path + '/' + self.model_name
         
-        # Make sure not to overwrite existing model
-        while os.path.exists(PATH + extension):
-            PATH = PATH + addition
-        
-        PATH = PATH + extension # add extension
-        
-        t.save(model.state_dict(), PATH) # Save
-        print('Saved model to: ', PATH)
+        t.save(model.state_dict(), model_name_path) # Save
+        print('Saved model to: ', model_name_path)
 
     def load_model(self, model, PATH = './Models/resulting_model.pt'): # A common PyTorch convention is to save models using either a .pt or .pth file extension
         if os.path.exists(PATH):
@@ -136,6 +155,11 @@ class Agent(object):
             print('No model loaded.')     
         return model 
 
+    def writeLog(self, epoch, update_counts, accumulated_epoch_reward, epsilon, epoch_loss):
+        file_name = self.save_path + '/' + self.csv_name
+        with open(file_name, 'a') as f:
+            csv_writer = csv.writer(f)
+            csv_writer.writerow([epoch, update_counts, accumulated_epoch_reward, epsilon, epoch_loss])
     
     # Returns tensor of current cropped and rescaled frame of environment
     def getGrayscaleFrameTensor(self):
@@ -158,7 +182,8 @@ class Agent(object):
         choose_max = False
         if np.random.random() > self.epsilon:
             choose_max = True
-        self.epsilon = max(self.epsilon_min, self.epsilon - self.epsilon_decay)
+        if len(self.memory) == self.start_learning_mem_size:    # Only decrease if training has started
+            self.epsilon = max(self.epsilon_min, self.epsilon - self.epsilon_decay)
 
         return choose_max
     
@@ -257,7 +282,8 @@ class Agent(object):
         
         total_loss = 0.0
         mini_batch = self.constructSample(self.batch_size)
-
+        self.q_net.optimizer.zero_grad()
+        
         for sample in mini_batch:
             q_values = self.q_net(sample.current_state.to(device), sample.current_state_actions.to(device))
             
@@ -271,14 +297,21 @@ class Agent(object):
 
             target_values = q_values.clone()
             target_values[0, int(sample.next_state_actions[0, 0])] = max_future_reward
-
-            self.q_net.optimizer.zero_grad()
+            
+            #self.q_net.optimizer.zero_grad()
             loss = self.q_net.loss(q_values, target_values)
             loss.backward()
-            self.q_net.optimizer.step()
+            #self.q_net.optimizer.step()
             total_loss += loss
         
-        return total_loss
+        # Averaging
+        for p in self.q_net.parameters():
+            p.grad /= self.batch_size
+        
+        # Apply update
+        self.q_net.optimizer.step()
+        
+        return total_loss / self.batch_size # Avg loss
     
     # Function to keep current state & current last_actions (multi)set up to date; shall return data to be inserted immediately into network
     # Function appears to work properly!
@@ -302,9 +335,10 @@ class Agent(object):
     def train(self):
         target_net_replacement_counter = 0
         epoch_loss = 0.0
-        frame_counter = 0
-        for epoch in range(self.trainings_epochs):
-            
+        epoch, update_counter = 0, 0
+        
+        while update_counter < self.max_updates and datetime.datetime.fromtimestamp(time.time()) < self.end_time:
+               
             environment.reset()                             # Start new game
             self.constructCurrentStateAndActions(init=True) # Initialize current state and last actions
             reward, done, self.action = 0, False, 0
@@ -315,41 +349,39 @@ class Agent(object):
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
             
-            while not done:
+            while not done and update_counter < self.max_updates and datetime.datetime.fromtimestamp(time.time()) < self.end_time:
                 self.action = self.chooseAction(self.current_state, self.last_actions)
                 
-                state_reward, reward, done = 0, 0, False
+                reward, skipping_reward, done = 0, 0, False
                 
-                #TODO: frame skipping - might need double check
                 for skip in range(self.frame_skip_rate + 1): #+1 to execute also action really iterested in (k'th action itself)
                     _, reward, done, _ = environment.step(self.action)
                     
-                    frame_counter += 1
                     # Clipping
                     if reward < 0:
                         reward = -1
                     elif reward > 0:
                         reward = 1
                         
-                    accumulated_epoch_reward += reward # don't miss skipped rewards when constructing sample for memory later
-                    state_reward += reward
+                    skipping_reward += reward # don't miss skipped rewards when constructing sample for memory later
                     if done: # game over.
                         break
                 
-                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, state_reward, done, False)
+                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, skipping_reward, done, False)
                 self.constructCurrentStateAndActions()      # Update current state and actions
                 epoch_loss += self.updateNetwork()
+                update_counter += 1 if not epoch_loss == 0.0  else 0
+                
+                accumulated_epoch_reward += skipping_reward
                 
                 target_net_replacement_counter += 1
-                if target_net_replacement_counter > self.update_target_net:
+                if target_net_replacement_counter == self.update_target_net:
                     self.target_net = copy.deepcopy(self.q_net)
-                    target_net_replacement_counter = 0
-                    #print('Equal?: ', t.all(t.eq(self.q_net.parameters, self.target_net.parameters)))
-                
-                #environment.render()
+                    target_net_replacement_counter = target_net_replacement_counter % self.update_target_net   
                 
             print(epoch, ';', accumulated_epoch_reward, ';', self.epsilon, ';', epoch_loss.item()) # make it easier for conversion to csv later
-            print('Frame counter: ', frame_counter)
+            self.writeLog(epoch, update_counter, accumulated_epoch_reward, self.epsilon, epoch_loss.item())
+            epoch += 1 
         
     def play(self):
         self.epsilon = 0.1 # no extensive exploration in playing mode
@@ -398,16 +430,32 @@ def main():
     gamma = 0.99 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
-    epsilon_decay = 1e-6
+    epsilon_decay = (1-0.1)/1000000 # as proposed in paper by Ameln
     frame_skip_rate = 3
     action_space = environment.action_space.n
     memory_capacity = 1000000
     batch_size = 32
-    trainings_epochs = 25000
+    trainings_updates = 2000000
     update_target_net = 10000
-    start_learning_mem_size = 1000
+    start_learning_mem_size = memory_capacity
+    
+    # Saving & Logging paths & names
+    start_time = time.localtime()
+    start_time_str = time.strftime("%Y_%m_%d_%H-%M-%S", start_time)
+    model_name = start_time_str + '_Model' + '.pt'
+    csv_name = start_time_str + '_log' + '.csv'
+    save_path = './Data'
+    print('Corresponding files: ', model_name, '\t', csv_name)
+    
+    # Make sure path exists
+    if not os.path.exists(save_path): 
+        os.makedirs(save_path)
+    
+    # Training vs playing 
     if len(sys.argv) == 2:
-        play_games = int(sys.argv[1])
+        print('Playing mode out of order. Bye!')
+        return
+        #play_games = int(sys.argv[1])
     else:
         play_games = 0
     
@@ -416,10 +464,12 @@ def main():
     target_net = copy.deepcopy(q_net)
     
     agent = Agent(gamma, epsilon, epsilon_min, epsilon_decay, frame_skip_rate,\
-                  action_space, memory_capacity, batch_size, trainings_epochs,\
-                  update_target_net, q_net, target_net, play_games, start_learning_mem_size)
+                  action_space, memory_capacity, batch_size, trainings_updates,\
+                  update_target_net, q_net, target_net, play_games, start_learning_mem_size,\
+                  model_name, csv_name, save_path, start_time)
                  
     #agent.q_net = agent.load_model(agent.q_net) # If no model can be loaded, it returns given one
+    
     if len(sys.argv) == 2:
         print('Welcome to playing mode! Selected number of games: ', play_games)
         agent.load_model(q_net)
