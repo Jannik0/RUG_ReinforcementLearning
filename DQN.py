@@ -25,19 +25,9 @@ environment = gym.make('Breakout-v0')
 # init: is true if corresponding state is a state close to 'after re-initialization' of game; don't start sampling here for training
 Experience = namedtuple('Experience', ('frame', 'action', 'reward', 'done', 'init'))
 
-
 # Used for training
 TrainingExample = namedtuple('TrainingExample', ('current_state', 'current_state_actions', 'next_state', 'next_state_actions', 'reward', 'done'))
 
-#TODO: 
-# CHeck target net copy
-# Remove one conv layer
-# Try lower learning rate
-# Larger memory
-# Larger eps-decay
-# Different loss function?
-# Balance eps decay
-# Lower eps min?
 
 class Network(nn.Module):
     def __init__(self, learning_rate, action_space):
@@ -45,12 +35,11 @@ class Network(nn.Module):
         
         self.flattened_size = self.computeConvOutputDim()
 
-        self.conv1 = nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
+        self.conv1 = nn.Conv2d(in_channels=4, out_channels=16, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
         
-        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=512) # +3 for 3 actions to be added
-        self.fc2 = nn.Linear(in_features=512, out_features=action_space)
+        self.fc1 = nn.Linear(in_features=self.flattened_size + 3, out_features=256) # +3 for 3 actions to be added
+        self.fc2 = nn.Linear(in_features=256, out_features=action_space)
 
         self.optimizer = optim.RMSprop(self.parameters(), lr=learning_rate)
         self.loss = nn.MSELoss()
@@ -63,9 +52,8 @@ class Network(nn.Module):
         if not previous_actions.is_cuda:
             previous_actions.to(device)
         
-        observation = funct.relu(self.conv1(observation)) #TODO: right relu?
+        observation = funct.relu(self.conv1(observation))
         observation = funct.relu(self.conv2(observation))
-        observation = funct.relu(self.conv3(observation))
         
         observation = observation.view(1, self.flattened_size)  # view works directly on tensors
         observation = t.cat((previous_actions, observation), 1) # concatenates tensors (actions, conv-output)
@@ -78,15 +66,13 @@ class Network(nn.Module):
         # width
         width = self.computeOutputDimensionConvLayer(in_dim=84, kernel_size=8, padding=0, stride=4)         #conv1
         width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=4, padding=0, stride=2)      #conv2
-        width = self.computeOutputDimensionConvLayer(in_dim=width, kernel_size=3, padding=0, stride=1)      #conv3
         
         # height
         height = self.computeOutputDimensionConvLayer(in_dim=84, kernel_size=8, padding=0, stride=4)        #conv1
         height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=4, padding=0, stride=2)    #conv2
-        height = self.computeOutputDimensionConvLayer(in_dim=height, kernel_size=3, padding=0, stride=1)    #conv3
         
         # width * height * out_channels
-        flattened_size = width * height * 64
+        flattened_size = width * height * 32
         
         return flattened_size
 
@@ -141,7 +127,7 @@ class Agent(object):
         t.save(model.state_dict(), PATH) # Save
         print('Saved model to: ', PATH)
 
-    def load_model(self, model, PATH = './Models/resulting_model.pt'): # A common PyTorch convention is to save models using either a .pt or .pth file extension.
+    def load_model(self, model, PATH = './Models/resulting_model.pt'): # A common PyTorch convention is to save models using either a .pt or .pth file extension
         if os.path.exists(PATH):
             print('Loading model: ' + PATH)
             model.load_state_dict(t.load(PATH,map_location=device))
@@ -156,9 +142,8 @@ class Agent(object):
         image = PIL.Image.fromarray(environment.render(mode='rgb_array'))
         image = tv.transforms.functional.to_grayscale(image, num_output_channels=1) # Use torchvision to convert to grayscale
         image = np.array(image)
-        cropped = image[31:image.shape[0]-20, 7:image.shape[1]-7]                   # crop
-        rescaled = PIL.Image.fromarray(cropped).resize((84,84))                     # resize/rescale to 84x84
-        image = np.array(rescaled)                                                  # Convert PIL image back to numpy-array
+        image = PIL.Image.fromarray(image).resize((84,84))                          # resize/rescale to 84x84
+        image = np.array(image)                                                     # Convert PIL image back to numpy-array
         return t.from_numpy(image).type('torch.FloatTensor')                        # Create tensor from numpy array
     
     # Here the experience only consists of the current frame and the action taken in that frame
@@ -216,7 +201,7 @@ class Agent(object):
             return index
     
     # Make sure all constraints on index are satisfied; return valid index
-    def getValidIndex(self, index): 
+    def getValidIndex(self, index):
         if not index == self.memory_index and not self.memory[index].init: # then everything's fine...
             return index
         #print('Index to be checked cause of problem: ', index, ' Current mem-index: ', self.memory_index, ' Is init conflict? ', self.memory[index].init)
@@ -325,7 +310,7 @@ class Agent(object):
             reward, done, self.action = 0, False, 0
             accumulated_epoch_reward, epoch_loss = 0, 0.0
             
-            # Instentiate new (init) state in memory
+            # Instantiate new (init) state in memory
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
             self.storeExperience(self.getGrayscaleFrameTensor(), self.action, reward, done, True)
@@ -333,7 +318,7 @@ class Agent(object):
             while not done:
                 self.action = self.chooseAction(self.current_state, self.last_actions)
                 
-                reward, done = 0, False
+                state_reward, reward, done = 0, 0, False
                 
                 #TODO: frame skipping - might need double check
                 for skip in range(self.frame_skip_rate + 1): #+1 to execute also action really iterested in (k'th action itself)
@@ -347,19 +332,19 @@ class Agent(object):
                         reward = 1
                         
                     accumulated_epoch_reward += reward # don't miss skipped rewards when constructing sample for memory later
+                    state_reward += reward
                     if done: # game over.
                         break
                 
-                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, accumulated_epoch_reward, done, False)
+                self.storeExperience(self.getGrayscaleFrameTensor(), self.action, state_reward, done, False)
                 self.constructCurrentStateAndActions()      # Update current state and actions
                 epoch_loss += self.updateNetwork()
                 
-                #TODO test
+                target_net_replacement_counter += 1
                 if target_net_replacement_counter > self.update_target_net:
                     self.target_net = copy.deepcopy(self.q_net)
-                    target_net_replacement_counter = target_net_replacement_counter % self.update_target_net
+                    target_net_replacement_counter = 0
                     #print('Equal?: ', t.all(t.eq(self.q_net.parameters, self.target_net.parameters)))
-                target_net_replacement_counter += 1
                 
                 #environment.render()
                 
@@ -413,14 +398,14 @@ def main():
     gamma = 0.99 # Discount factor
     epsilon = 1
     epsilon_min = 0.1
-    epsilon_decay = 5e-6
+    epsilon_decay = 1e-6
     frame_skip_rate = 3
     action_space = environment.action_space.n
     memory_capacity = 1000000
-    batch_size = 20
-    trainings_epochs = 10000
-    update_target_net = 40 # roughly similar to value in paper (for Breakout)
-    start_learning_mem_size = memory_capacity #50000
+    batch_size = 32
+    trainings_epochs = 25000
+    update_target_net = 10000
+    start_learning_mem_size = 1000
     if len(sys.argv) == 2:
         play_games = int(sys.argv[1])
     else:
