@@ -1,5 +1,8 @@
 import random
 import copy
+import os
+import csv
+import time
 from collections import deque
 
 import numpy as np
@@ -51,9 +54,11 @@ class Agent:
 
         for i in range(self.batch_size):
             if mini_batch[i][4]:
-                q_values[i] = mini_batch[i][2]
+                q_values[i][mini_batch[i][1]] = mini_batch[i][2]
             else:
-                q_values[i] = mini_batch[i][2] + self.discount_factor * q_targets[i]
+                q_values[i][mini_batch[i][1]] = mini_batch[i][2] + self.discount_factor * np.max(q_targets[:][mini_batch[i][1]])
+                #q_values[i][mini_batch[i][1]] = mini_batch[i][2] + self.discount_factor * np.max(q_targets[i])
+                #q_values[i][mini_batch[i][1]] = mini_batch[i][2] + self.discount_factor * q_targets[i][mini_batch[i][1]]
 
         self.q_net.fit(prev_states, q_values, epochs=1, verbose=0)
 
@@ -82,12 +87,19 @@ def getPreprocessedFrame(observation):
     observation = skimage.transform.resize(observation, (84, 84))
     return observation
 
+def writeLog(path, epoch, accumulated_epoch_reward, epsilon):
+    if not os.path.exists('./Data'):
+        os.makedirs('./Data')
+    with open(path, 'a') as f:
+        csv_writer = csv.writer(f, delimiter=';')
+        csv_writer.writerow([epoch, accumulated_epoch_reward, epsilon])
+
 def main():
     print("Hello World")
 
     environment = gym.make(ENVIRONMENT_ID)
 
-    epochs = 10000
+    epochs = 100000
     update_target_step = 10000
 
     actionspace_size = environment.action_space.n
@@ -108,6 +120,9 @@ def main():
     agent = Agent(environment, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
 
     step_number = 0
+    start_time_str = time.strftime("%Y_%m_%d_%H-%M-%S", time.localtime())
+    end_time = time.time() + 250000
+
     for epoch in range(epochs):
         environment.reset()
 
@@ -150,7 +165,13 @@ def main():
             
             accumulated_epoch_reward += reward
         
+        # Produce output
         print(epoch, ';', accumulated_epoch_reward, ';', agent.epsilon)
+        writeLog('./Data/' + start_time_str + '_log.csv', epoch, accumulated_epoch_reward, agent.epsilon)
+
+        if time.time() > end_time:
+            print('timeout')
+            break
 
 if __name__ == "__main__":
     main()
