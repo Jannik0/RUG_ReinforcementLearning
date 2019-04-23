@@ -14,16 +14,21 @@ import keras
 ENVIRONMENT_ID = 'Breakout-v0'
 
 class Network:
-    def __init__(self, output_size, learning_rate, gradient_momentum, gradient_min):
-        self.model = keras.models.Sequential()
+    def __init__(self, actionspace_size, learning_rate, gradient_momentum, gradient_min):
+        frames_input = keras.layers.Input((84, 84, 4))
+        actions_input = keras.layers.Input((actionspace_size,))
+        
+        conv1 = keras.layers.Conv2D(16, (8, 8), strides=(4, 4), activation="relu")(frames_input)
+        conv2 = keras.layers.Conv2D(32, (4, 4), strides=(2, 2), activation="relu")(conv1)
 
-        self.model.add(keras.layers.Conv2D(16, (8, 8), strides=(4, 4), activation="relu", input_shape=(84, 84, 4)))
-        self.model.add(keras.layers.Conv2D(32, (4, 4), strides=(2, 2), activation="relu"))
+        flattened = keras.layers.Flatten()(conv2)
 
-        self.model.add(keras.layers.Flatten())
+        hidden = keras.layers.Dense(256, activation="relu")(flattened)
+        output = keras.layers.Dense(actionspace_size)(hidden)
 
-        self.model.add(keras.layers.Dense(256, activation="relu"))
-        self.model.add(keras.layers.Dense(output_size))
+        filtered_output = keras.layers.merge.Multiply()([output, actions_input])
+
+        self.model = keras.models.Model(inputs=[frames_input, actions_input], outputs=filtered_output)
 
         self.model.compile(loss='mse', optimizer=keras.optimizers.RMSprop(lr=learning_rate, rho=gradient_momentum, epsilon=gradient_min))
 
@@ -42,34 +47,43 @@ class Agent:
 
     def train(self):
         mini_batch = random.sample(self.memory, self.batch_size)
-        prev_states = np.empty((self.batch_size, 84, 84, 4))
-        next_states = np.empty((self.batch_size, 84, 84, 4))
+        prev_states = np.empty((self.batch_size, 84, 84, 4), dtype=np.float32)
+        next_states = np.empty((self.batch_size, 84, 84, 4), dtype=np.float32)
+        actions = np.empty(self.batch_size, dtype=np.int32)
+        rewards = np.empty(self.batch_size, dtype=np.float32)
+        terminals = np.empty(self.batch_size, dtype=np.bool)
 
         for i in range(self.batch_size):
-            prev_states[i] = mini_batch[i][0]
-            next_states[i] = mini_batch[i][3]
+            prev_states[i] = np.float32(mini_batch[i][0] / 255.0)
+            next_states[i] = np.float32(mini_batch[i][3] / 255.0)
+            actions[i] = mini_batch[i][1]
+            rewards[i] = mini_batch[i][2]
+            terminals[i] = mini_batch[i][4]
 
-        q_values = self.q_net.predict(prev_states)
-        q_targets = self.target_net.predict(next_states)
+        actions_mask = np.ones((self.batch_size, self.actionspace_size))
+
+        q_values = np.empty(self.batch_size)
+        q_targets = self.target_net.predict([next_states, actions_mask])
 
         for i in range(self.batch_size):
-            if mini_batch[i][4]:
-                q_values[i][mini_batch[i][1]] = mini_batch[i][2]
+            if terminals[i]:
+                q_values[i] = rewards[i]
             else:
-                q_values[i][mini_batch[i][1]] = mini_batch[i][2] + self.discount_factor * np.max(q_targets[:][mini_batch[i][1]])
-                #q_values[i][mini_batch[i][1]] = mini_batch[i][2] + self.discount_factor * np.max(q_targets[i])
-                #q_values[i][mini_batch[i][1]] = mini_batch[i][2] + self.discount_factor * q_targets[i][mini_batch[i][1]]
+                q_values[i] = rewards[i] + self.discount_factor * np.max(q_targets[i])
 
-        self.q_net.fit(prev_states, q_values, epochs=1, verbose=0)
+        one_hot_actions = np.eye(self.actionspace_size)[np.array(actions).reshape(-1)]
+        self.q_net.fit([prev_states, one_hot_actions], one_hot_actions * q_values[:, None], batch_size=self.batch_size, epochs=1, verbose=0)
 
         self.updateEpsilon()
 
     def chooseAction(self, state):
+        state = np.float32(state / 255.0)
         if random.random() < self.epsilon:
             action = random.randrange(self.actionspace_size)
         else:
-            q_values = self.q_net.predict(state, batch_size=self.batch_size)
-            action = np.argmax(q_values[0])
+            actions_mask = np.ones(self.actionspace_size).reshape(1, self.actionspace_size)
+            q_values = self.q_net.predict([state, actions_mask])
+            action = np.argmax(q_values)
 
         return action
 
@@ -85,6 +99,7 @@ class Agent:
 def getPreprocessedFrame(observation):
     observation = skimage.color.rgb2gray(observation)
     observation = skimage.transform.resize(observation, (84, 84))
+    observation = np.uint8(observation * 255)
     return observation
 
 def writeLog(path, epoch, accumulated_epoch_reward, epsilon):
