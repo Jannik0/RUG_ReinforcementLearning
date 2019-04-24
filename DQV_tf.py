@@ -14,18 +14,25 @@ import keras
 ENVIRONMENT_ID = 'Breakout-v0'
 
 class Network:
-    def __init__(self, output_size, learning_rate, gradient_momentum, gradient_min):
+    def __init__(self, nettype, actionspace_size, learning_rate, gradient_momentum, gradient_min):
         frames_input = keras.layers.Input((84, 84, 4))
-        
+        actions_input = keras.layers.Input((actionspace_size,))
+
         conv1 = keras.layers.Conv2D(16, (8, 8), strides=(4, 4), activation="relu")(frames_input)
         conv2 = keras.layers.Conv2D(32, (4, 4), strides=(2, 2), activation="relu")(conv1)
 
         flattened = keras.layers.Flatten()(conv2)
 
         hidden = keras.layers.Dense(256, activation="relu")(flattened)
-        output = keras.layers.Dense(output_size)(hidden)
 
-        self.model = keras.models.Model(inputs=frames_input, outputs=output)
+        if nettype == 'q':
+            output = keras.layers.Dense(actionspace_size)(hidden)
+            filtered_output = keras.layers.merge.Multiply()([output, actions_input])
+            self.model = keras.models.Model(inputs=[frames_input, actions_input], outputs=filtered_output)
+
+        if nettype == 'v':
+            output = keras.layers.Dense(1)(hidden)
+            self.model = keras.models.Model(inputs=frames_input, outputs=output)
 
         self.model.compile(loss='mse', optimizer=keras.optimizers.RMSprop(lr=learning_rate, rho=gradient_momentum, epsilon=gradient_min))
 
@@ -57,19 +64,23 @@ class Agent:
             actions[i] = mini_batch[i][1]
             rewards[i] = mini_batch[i][2]
             terminals[i] = mini_batch[i][4]
+        
+        actions_mask = np.ones((self.batch_size, self.actionspace_size))
 
-        q_values = self.q_net.predict(prev_states)
+        q_values = np.empty(self.batch_size)
         v_target = self.target_net.predict(next_states)
         v_targets = np.zeros((self.batch_size,))
 
         for i in range(self.batch_size):
             if terminals[i]:
+                q_values[i] = rewards[i]
                 v_targets[i] = rewards[i]
-                q_values[i][actions[i]] = rewards[i]
             else:
+                q_values[i] = rewards[i] + self.discount_factor * v_target[i]
                 v_targets[i] = rewards[i] + self.discount_factor * v_target[i]
-                q_values[i][actions[i]] = rewards[i] + self.discount_factor * v_target[i]
 
+        one_hot_actions = np.eye(self.actionspace_size)[np.array(actions).reshape(-1)]
+        self.q_net.fit([prev_states, one_hot_actions], one_hot_actions * q_values[:, None], batch_size=self.batch_size, epochs=1, verbose=0)
         self.v_net.fit(prev_states, v_targets, batch_size=self.batch_size, epochs=1, verbose=0)
 
         self.updateEpsilon()
@@ -79,8 +90,9 @@ class Agent:
         if random.random() < self.epsilon:
             action = random.randrange(self.actionspace_size)
         else:
-            q_values = self.q_net.predict(state)
-            action = np.argmax(q_values[0])
+            actions_mask = np.ones(self.actionspace_size).reshape(1, self.actionspace_size)
+            q_values = self.q_net.predict([state, actions_mask])
+            action = np.argmax(q_values)
 
         return action
 
@@ -126,8 +138,8 @@ def main():
 
     memory = deque(maxlen=1000000)
 
-    q_net = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min).model
-    v_net = Network(1, learning_rate, gradient_momentum, gradient_min).model
+    q_net = Network('q', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
+    v_net = Network('v', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
     target_net = copy.deepcopy(v_net)
 
     agent = Agent(environment, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
