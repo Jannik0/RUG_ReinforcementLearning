@@ -85,6 +85,16 @@ class Agent:
 
         self.updateEpsilon()
 
+    def saveModel(self, file_name):
+        if not os.path.exists('./Data'):
+            os.makedirs('./Data')
+        
+        # Save entire model to a HDF5 file
+        path = './Data/' + file_name + '.h5'
+        self.q_net.save(path)
+        print('Saved model as: ', path)
+
+
     def chooseAction(self, state, last_actions):
         state = np.float32(state / 255.0)
         if random.random()  < self.epsilon:
@@ -203,6 +213,8 @@ def main():
         if time.time() > end_time:
             print('timeout')
             break
+            
+    agent.saveModel(start_time_str + '_Model')
 
 if __name__ == "__main__":
     main()
