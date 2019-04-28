@@ -17,18 +17,23 @@ class Network:
     def __init__(self, actionspace_size, learning_rate, gradient_momentum, gradient_min):
         frames_input = keras.layers.Input((84, 84, 4))
         actions_input = keras.layers.Input((actionspace_size,))
+        last_actions_input = keras.layers.Input((1,3))
         
         conv1 = keras.layers.Conv2D(16, (8, 8), strides=(4, 4), activation="relu")(frames_input)
         conv2 = keras.layers.Conv2D(32, (4, 4), strides=(2, 2), activation="relu")(conv1)
 
         flattened = keras.layers.Flatten()(conv2)
+        
+        # Concatenate flattened conv-output and actions
+        flattened_actions = keras.layers.Flatten()(last_actions_input)
+        merged = keras.layers.Concatenate(axis=1)([flattened,flattened_actions])
 
-        hidden = keras.layers.Dense(256, activation="relu")(flattened)
+        hidden = keras.layers.Dense(256+3, activation="relu")(merged)
         output = keras.layers.Dense(actionspace_size)(hidden)
 
         filtered_output = keras.layers.merge.Multiply()([output, actions_input])
 
-        self.model = keras.models.Model(inputs=[frames_input, actions_input], outputs=filtered_output)
+        self.model = keras.models.Model(inputs=[frames_input, actions_input, last_actions_input], outputs=filtered_output)
 
         self.model.compile(loss='mse', optimizer=keras.optimizers.RMSprop(lr=learning_rate, rho=gradient_momentum, epsilon=gradient_min))
 
@@ -52,6 +57,8 @@ class Agent:
         actions = np.empty(self.batch_size, dtype=np.int32)
         rewards = np.empty(self.batch_size, dtype=np.float32)
         terminals = np.empty(self.batch_size, dtype=np.bool)
+        prev_state_actions = np.empty((self.batch_size, 1, 3), dtype=np.float32)
+        next_state_actions = np.empty((self.batch_size, 1, 3), dtype=np.float32)
 
         for i in range(self.batch_size):
             prev_states[i] = np.float32(mini_batch[i][0] / 255.0)
@@ -59,11 +66,13 @@ class Agent:
             actions[i] = mini_batch[i][1]
             rewards[i] = mini_batch[i][2]
             terminals[i] = mini_batch[i][4]
+            prev_state_actions[i] = mini_batch[i][5]
+            next_state_actions[i] = mini_batch[i][6]
 
         actions_mask = np.ones((self.batch_size, self.actionspace_size))
 
         q_values = np.empty(self.batch_size)
-        q_targets = self.target_net.predict([next_states, actions_mask])
+        q_targets = self.target_net.predict([next_states, actions_mask, next_state_actions])
 
         for i in range(self.batch_size):
             if terminals[i]:
@@ -72,7 +81,7 @@ class Agent:
                 q_values[i] = rewards[i] + self.discount_factor * np.max(q_targets[i])
 
         one_hot_actions = np.eye(self.actionspace_size)[np.array(actions).reshape(-1)]
-        self.q_net.fit([prev_states, one_hot_actions], one_hot_actions * q_values[:, None], batch_size=self.batch_size, epochs=1, verbose=0)
+        self.q_net.fit([prev_states, one_hot_actions, prev_state_actions], one_hot_actions * q_values[:, None], batch_size=self.batch_size, epochs=1, verbose=0)
 
         self.updateEpsilon()
 
@@ -86,13 +95,13 @@ class Agent:
         print('Saved model as: ', path)
 
 
-    def chooseAction(self, state):
+    def chooseAction(self, state, last_actions):
         state = np.float32(state / 255.0)
         if random.random()  < self.epsilon:
             action = random.randrange(self.actionspace_size)
         else:
             actions_mask = np.ones(self.actionspace_size).reshape(1, self.actionspace_size)
-            q_values = self.q_net.predict([state, actions_mask])
+            q_values = self.q_net.predict([state, actions_mask, last_actions.reshape(1,1,3)])
             action = np.argmax(q_values)
 
         return action
@@ -100,8 +109,8 @@ class Agent:
     def updateEpsilon(self):
         self.epsilon = max(self.epsilon_min, self.epsilon - self.epsilon_decay)
 
-    def storeExperience(self, state, action, reward, next_state, terminal):
-        self.memory.append((state, action, reward, next_state, terminal))
+    def storeExperience(self, state, action, reward, next_state, terminal, prev_state_actions, next_state_actions):
+        self.memory.append((state, action, reward, next_state, terminal, prev_state_actions, next_state_actions))
 
     def updateTargetNet(self):
         self.target_net.set_weights(self.q_net.get_weights())
@@ -158,6 +167,8 @@ def main():
         frame = getPreprocessedFrame(observation)
         state = np.stack((frame, frame, frame, frame), axis=2)
         state = np.reshape([state], (1, 84, 84, 4))
+        prev_state_actions = np.zeros(3)
+        next_state_actions = np.zeros(3)
         
         accumulated_epoch_reward = 0
 
@@ -167,7 +178,7 @@ def main():
             lives = info['ale.lives']
 
             # Choose and perform action and check if life lost
-            action = agent.chooseAction(state)
+            action = agent.chooseAction(state, next_state_actions)
             observation, reward, done, info = environment.step(action)
             if lives > info['ale.lives'] or done:
                 terminal = True
@@ -178,8 +189,13 @@ def main():
             frame = np.reshape([frame], (1, 84, 84, 1))
             state = np.append(frame, state[:, :, :, :3], axis=3)
             
+            # Update actions
+            prev_state_actions = next_state_actions
+            next_state_actions = next_state_actions[:2]
+            next_state_actions = np.append([action], next_state_actions, axis=0)
+            
             # Store state in memory
-            agent.storeExperience(prev_state, action, reward, state, terminal)
+            agent.storeExperience(prev_state, action, reward, state, terminal, prev_state_actions, next_state_actions)
 
             # Train agent
             if update_counter > 5000:

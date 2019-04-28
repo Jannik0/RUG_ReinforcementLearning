@@ -14,28 +14,38 @@ import keras
 ENVIRONMENT_ID = 'Breakout-v0'
 
 class Network:
-    def __init__(self, actionspace_size, learning_rate, gradient_momentum, gradient_min):
+    def __init__(self, nettype, actionspace_size, learning_rate, gradient_momentum, gradient_min):
         frames_input = keras.layers.Input((84, 84, 4))
         actions_input = keras.layers.Input((actionspace_size,))
+        last_actions_input = keras.layers.Input((1,3))
         
         conv1 = keras.layers.Conv2D(16, (8, 8), strides=(4, 4), activation="relu")(frames_input)
         conv2 = keras.layers.Conv2D(32, (4, 4), strides=(2, 2), activation="relu")(conv1)
 
         flattened = keras.layers.Flatten()(conv2)
+        
+        # Concatenate flattened conv-output and actions
+        flattened_actions = keras.layers.Flatten()(last_actions_input)
+        merged = keras.layers.Concatenate(axis=1)([flattened,flattened_actions])
 
-        hidden = keras.layers.Dense(256, activation="relu")(flattened)
-        output = keras.layers.Dense(actionspace_size)(hidden)
+        hidden = keras.layers.Dense(256+3, activation="relu")(merged)
 
-        filtered_output = keras.layers.merge.Multiply()([output, actions_input])
+        if nettype == 'q':
+            output = keras.layers.Dense(actionspace_size)(hidden)
+            filtered_output = keras.layers.merge.Multiply()([output, actions_input])
+            self.model = keras.models.Model(inputs=[frames_input, actions_input, last_actions_input], outputs=filtered_output)
 
-        self.model = keras.models.Model(inputs=[frames_input, actions_input], outputs=filtered_output)
+        if nettype == 'v':
+            output = keras.layers.Dense(1)(hidden)
+            self.model = keras.models.Model(inputs=[frames_input, last_actions_input], outputs=output)
 
         self.model.compile(loss='mse', optimizer=keras.optimizers.RMSprop(lr=learning_rate, rho=gradient_momentum, epsilon=gradient_min))
 
 class Agent:
-    def __init__(self, environment, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min):
+    def __init__(self, environment, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min):
         self.environment = environment
         self.q_net = q_net
+        self.v_net = v_net
         self.target_net = target_net
         self.memory = memory
         self.batch_size = batch_size
@@ -52,6 +62,8 @@ class Agent:
         actions = np.empty(self.batch_size, dtype=np.int32)
         rewards = np.empty(self.batch_size, dtype=np.float32)
         terminals = np.empty(self.batch_size, dtype=np.bool)
+        prev_state_actions = np.empty((self.batch_size, 1, 3), dtype=np.float32)
+        next_state_actions = np.empty((self.batch_size, 1, 3), dtype=np.float32)
 
         for i in range(self.batch_size):
             prev_states[i] = np.float32(mini_batch[i][0] / 255.0)
@@ -59,40 +71,36 @@ class Agent:
             actions[i] = mini_batch[i][1]
             rewards[i] = mini_batch[i][2]
             terminals[i] = mini_batch[i][4]
-
+            prev_state_actions[i] = mini_batch[i][5]
+            next_state_actions[i] = mini_batch[i][6]
+        
         actions_mask = np.ones((self.batch_size, self.actionspace_size))
 
         q_values = np.empty(self.batch_size)
-        q_targets = self.target_net.predict([next_states, actions_mask])
+        v_target = self.target_net.predict([next_states, next_state_actions])
+        v_targets = np.zeros((self.batch_size,))
 
         for i in range(self.batch_size):
             if terminals[i]:
                 q_values[i] = rewards[i]
+                v_targets[i] = rewards[i]
             else:
-                q_values[i] = rewards[i] + self.discount_factor * np.max(q_targets[i])
+                q_values[i] = rewards[i] + self.discount_factor * v_target[i]
+                v_targets[i] = rewards[i] + self.discount_factor * v_target[i]
 
         one_hot_actions = np.eye(self.actionspace_size)[np.array(actions).reshape(-1)]
-        self.q_net.fit([prev_states, one_hot_actions], one_hot_actions * q_values[:, None], batch_size=self.batch_size, epochs=1, verbose=0)
+        self.q_net.fit([prev_states, one_hot_actions, prev_state_actions], one_hot_actions * q_values[:, None], batch_size=self.batch_size, epochs=1, verbose=0)
+        self.v_net.fit([prev_states, prev_state_actions], v_targets, batch_size=self.batch_size, epochs=1, verbose=0)
 
         self.updateEpsilon()
 
-    def saveModel(self, file_name):
-        if not os.path.exists('./Data'):
-            os.makedirs('./Data')
-        
-        # Save entire model to a HDF5 file
-        path = './Data/' + file_name + '.h5'
-        self.q_net.save(path)
-        print('Saved model as: ', path)
-
-
-    def chooseAction(self, state):
+    def chooseAction(self, state, last_actions):
         state = np.float32(state / 255.0)
         if random.random()  < self.epsilon:
             action = random.randrange(self.actionspace_size)
         else:
             actions_mask = np.ones(self.actionspace_size).reshape(1, self.actionspace_size)
-            q_values = self.q_net.predict([state, actions_mask])
+            q_values = self.q_net.predict([state, actions_mask, last_actions.reshape(1,1,3)])
             action = np.argmax(q_values)
 
         return action
@@ -100,11 +108,11 @@ class Agent:
     def updateEpsilon(self):
         self.epsilon = max(self.epsilon_min, self.epsilon - self.epsilon_decay)
 
-    def storeExperience(self, state, action, reward, next_state, terminal):
-        self.memory.append((state, action, reward, next_state, terminal))
+    def storeExperience(self, state, action, reward, next_state, terminal, prev_state_actions, next_state_actions):
+        self.memory.append((state, action, reward, next_state, terminal, prev_state_actions, next_state_actions))
 
     def updateTargetNet(self):
-        self.target_net.set_weights(self.q_net.get_weights())
+        self.target_net.set_weights(self.v_net.get_weights())
 
 def getPreprocessedFrame(observation):
     observation = skimage.color.rgb2gray(observation)
@@ -123,7 +131,7 @@ def main():
     print("Hello World")
 
     environment = gym.make(ENVIRONMENT_ID)
-    
+
     epoch = 0
     total_updates = 100000
     update_target_step = 10000
@@ -140,12 +148,12 @@ def main():
 
     memory = deque(maxlen=1000000)
 
-    q_net = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min).model
-    target_net = copy.deepcopy(q_net)
+    q_net = Network('q', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
+    v_net = Network('v', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
+    target_net = copy.deepcopy(v_net)
 
-    agent = Agent(environment, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
+    agent = Agent(environment, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
 
-    step_number = 0
     start_time_str = time.strftime("%Y_%m_%d_%H-%M-%S", time.localtime())
     end_time = time.time() + 250000
 
@@ -158,7 +166,9 @@ def main():
         frame = getPreprocessedFrame(observation)
         state = np.stack((frame, frame, frame, frame), axis=2)
         state = np.reshape([state], (1, 84, 84, 4))
-        
+        prev_state_actions = np.zeros(3)
+        next_state_actions = np.zeros(3)
+
         accumulated_epoch_reward = 0
 
         while not done and update_counter < total_updates and time.time() < end_time:
@@ -167,7 +177,7 @@ def main():
             lives = info['ale.lives']
 
             # Choose and perform action and check if life lost
-            action = agent.chooseAction(state)
+            action = agent.chooseAction(state, next_state_actions)
             observation, reward, done, info = environment.step(action)
             if lives > info['ale.lives'] or done:
                 terminal = True
@@ -178,8 +188,13 @@ def main():
             frame = np.reshape([frame], (1, 84, 84, 1))
             state = np.append(frame, state[:, :, :, :3], axis=3)
             
+            # Update actions
+            prev_state_actions = next_state_actions
+            next_state_actions = next_state_actions[:2]
+            next_state_actions = np.append([action], next_state_actions, axis=0)
+            
             # Store state in memory
-            agent.storeExperience(prev_state, action, reward, state, terminal)
+            agent.storeExperience(prev_state, action, reward, state, terminal, prev_state_actions, next_state_actions)
 
             # Train agent
             if update_counter > 5000:
@@ -198,8 +213,6 @@ def main():
         if time.time() > end_time:
             print('timeout')
             break
-            
-    agent.saveModel(start_time_str + '_Model')
 
 if __name__ == "__main__":
     main()
