@@ -125,7 +125,7 @@ def main():
     environment = gym.make(ENVIRONMENT_ID)
     
     epoch = 0
-    total_updates = 100000
+    total_updates = 1000000
     update_target_step = 10000
     update_counter = 0
     actionspace_size = environment.action_space.n
@@ -137,6 +137,7 @@ def main():
     epsilon = 1
     epsilon_decay = 1e-06
     epsilon_min = 0.1
+    save_checkpoint = 50000
 
     memory = deque(maxlen=1000000)
 
@@ -188,6 +189,10 @@ def main():
             # Potentially update target net
             if update_counter % update_target_step == 0:
                 agent.updateTargetNet()
+                
+            # Save checkpoints
+            if update_counter % save_checkpoint == 0:
+                agent.saveModel(start_time_str + '_Model_' + str(update_counter) + '_')
             
             accumulated_epoch_reward += reward
         
