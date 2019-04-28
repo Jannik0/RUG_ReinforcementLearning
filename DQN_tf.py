@@ -121,21 +121,22 @@ def getPreprocessedFrame(observation):
     observation = np.uint8(observation * 255)
     return observation
 
-def writeLog(path, epoch, accumulated_epoch_reward, epsilon):
+def writeLog(path, epoch, accumulated_epoch_reward, epsilon, updates):
     if not os.path.exists('./Data'):
         os.makedirs('./Data')
     with open(path, 'a') as f:
         csv_writer = csv.writer(f, delimiter=';')
-        csv_writer.writerow([epoch, accumulated_epoch_reward, epsilon])
+        csv_writer.writerow([epoch, accumulated_epoch_reward, epsilon, updates])
 
 def main():
     print("Hello World")
 
     environment = gym.make(ENVIRONMENT_ID)
-
-    epochs = 100000
+    
+    epoch = 0
+    total_updates = 100000
     update_target_step = 10000
-
+    update_counter = 0
     actionspace_size = environment.action_space.n
     batch_size = 32
     discount_factor = 0.99
@@ -157,7 +158,7 @@ def main():
     start_time_str = time.strftime("%Y_%m_%d_%H-%M-%S", time.localtime())
     end_time = time.time() + 250000
 
-    for epoch in range(epochs):
+    while update_counter < total_updates:
         environment.reset()
 
         observation, reward, done, info = environment.step(1)
@@ -171,8 +172,8 @@ def main():
         
         accumulated_epoch_reward = 0
 
-        while not done:
-            step_number += 1
+        while not done and update_counter < total_updates and time.time() < end_time:
+            update_counter += 1
             terminal = False
             lives = info['ale.lives']
 
@@ -197,18 +198,18 @@ def main():
             agent.storeExperience(prev_state, action, reward, state, terminal, prev_state_actions, next_state_actions)
 
             # Train agent
-            if step_number > 5000:
+            if update_counter > 5000:
                 agent.train()
 
             # Potentially update target net
-            if step_number % update_target_step == 0:
+            if update_counter % update_target_step == 0:
                 agent.updateTargetNet()
             
             accumulated_epoch_reward += reward
         
         # Produce output
-        print(epoch, ';', accumulated_epoch_reward, ';', agent.epsilon)
-        writeLog('./Data/' + start_time_str + '_log.csv', epoch, accumulated_epoch_reward, agent.epsilon)
+        print(epoch, ';', accumulated_epoch_reward, ';', agent.epsilon, update_counter)
+        writeLog('./Data/' + start_time_str + '_log.csv', epoch, accumulated_epoch_reward, agent.epsilon, update_counter)
 
         if time.time() > end_time:
             print('timeout')
