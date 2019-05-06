@@ -151,8 +151,7 @@ def main():
         print('Attemps to open file: ', sys.argv[1])
         with open('./Data/' + sys.argv[1], 'rb') as input:
             saveObject = pickle.load(input)        
-    
-    if continue_training:
+        
         ENVIRONMENT_ID = saveObject.env_id
     
     environment = gym.make(ENVIRONMENT_ID)
@@ -193,8 +192,10 @@ def main():
 
     while update_counter < total_updates:
         environment.reset()
-
-        observation, reward, done, info = environment.step(1)
+        
+        # Generate random game initializations
+        for i in range(np.random.random_integers(low=1, high=3)):
+            observation, reward, done, info = environment.step(1)
 
         # Init state based on first frame
         frame = getPreprocessedFrame(observation)
