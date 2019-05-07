@@ -1,8 +1,10 @@
 import random
 import copy
 import os
+import sys
 import csv
 import time
+import pickle
 from collections import deque
 
 import numpy as np
@@ -49,6 +51,7 @@ class Agent:
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
+        self.weight_updates = 0
 
     def train(self):
         mini_batch = random.sample(self.memory, self.batch_size)
@@ -64,24 +67,23 @@ class Agent:
             actions[i] = mini_batch[i][1]
             rewards[i] = mini_batch[i][2]
             terminals[i] = mini_batch[i][4]
-        
-        actions_mask = np.ones((self.batch_size, self.actionspace_size))
 
         q_values = np.empty(self.batch_size)
-        v_target = self.target_net.predict(next_states)
-        v_targets = np.zeros((self.batch_size,))
+        v_values = np.zeros((self.batch_size,))
+        v_targets = self.target_net.predict(next_states)
 
         for i in range(self.batch_size):
             if terminals[i]:
                 q_values[i] = rewards[i]
-                v_targets[i] = rewards[i]
+                v_values[i] = rewards[i]
             else:
-                q_values[i] = rewards[i] + self.discount_factor * v_target[i]
-                v_targets[i] = rewards[i] + self.discount_factor * v_target[i]
+                q_values[i] = rewards[i] + self.discount_factor * v_targets[i]
+                v_values[i] = rewards[i] + self.discount_factor * v_targets[i]
 
         one_hot_actions = np.eye(self.actionspace_size)[np.array(actions).reshape(-1)]
         self.q_net.fit([prev_states, one_hot_actions], one_hot_actions * q_values[:, None], batch_size=self.batch_size, epochs=1, verbose=0)
-        self.v_net.fit(prev_states, v_targets, batch_size=self.batch_size, epochs=1, verbose=0)
+        self.v_net.fit(prev_states, v_values, batch_size=self.batch_size, epochs=1, verbose=0)
+        self.weight_updates += 1
 
         self.updateEpsilon()
 
@@ -111,17 +113,36 @@ def getPreprocessedFrame(observation):
     observation = np.uint8(observation * 255)
     return observation
 
-def writeLog(path, epoch, accumulated_epoch_reward, epsilon):
+def writeLog(path, epoch, accumulated_epoch_reward, epsilon, weight_updates):
     if not os.path.exists('./Data'):
         os.makedirs('./Data')
     with open(path, 'a') as f:
         csv_writer = csv.writer(f, delimiter=';')
-        csv_writer.writerow([epoch, accumulated_epoch_reward, epsilon])
+        csv_writer.writerow([epoch, accumulated_epoch_reward, epsilon, weight_updates])
+
+def saveModel(path, model):
+    if not os.path.exists('./Data'):
+        os.makedirs('./Data')
+    model.save(path)
+
+def saveAgent(path, agent):
+    if not os.path.exists('./Data'):
+        os.makedirs('./Data/')
+    with open(path, 'wb') as saved_object:
+        pickle.dump(agent, saved_object, pickle.HIGHEST_PROTOCOL)
+
+def loadAgent(path):
+    with open(path, 'rb') as saved_object:
+        return pickle.load(saved_object)
 
 def main():
-    print("Hello World")
+    print("Hello World\nThis is DQV " + ENVIRONMENT_ID)
+    path = './Data/' + time.strftime("%Y_%m_%d_%H-%M-%S", time.localtime()) + '_DQV_' + ENVIRONMENT_ID
+    print("session will be stored at " + path)
 
     environment = gym.make(ENVIRONMENT_ID)
+
+    continue_trainig = True if len(sys.argv) == 2 else False
 
     epochs = 100000
     update_target_step = 10000
@@ -136,22 +157,25 @@ def main():
     epsilon_decay = 1e-06
     epsilon_min = 0.1
 
-    memory = deque(maxlen=1000000)
-
-    q_net = Network('q', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
-    v_net = Network('v', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
-    target_net = copy.deepcopy(v_net)
-
-    agent = Agent(environment, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
+    if (continue_trainig):
+        print('loading previously saved agent')
+        agent = loadAgent('./Data/' + sys.argv[1])
+    else:
+        print("creating new agent")
+        q_net = Network('q', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
+        v_net = Network('v', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
+        target_net = copy.deepcopy(v_net)
+        memory = deque(maxlen=1000000)
+        agent = Agent(environment, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
 
     step_number = 0
-    start_time_str = time.strftime("%Y_%m_%d_%H-%M-%S", time.localtime())
     end_time = time.time() + 250000
 
     for epoch in range(epochs):
         environment.reset()
 
-        observation, reward, done, info = environment.step(1)
+        for _ in range(random.randint(1, 25)):
+            observation, reward, done, info = environment.step(1)
 
         # Init state based on first frame
         frame = getPreprocessedFrame(observation)
@@ -168,6 +192,8 @@ def main():
             # Choose and perform action and check if life lost
             action = agent.chooseAction(state)
             observation, reward, done, info = environment.step(action)
+            accumulated_epoch_reward += reward
+            reward = np.clip(reward, -1., 1.)
             if lives > info['ale.lives'] or done:
                 terminal = True
 
@@ -181,22 +207,25 @@ def main():
             agent.storeExperience(prev_state, action, reward, state, terminal)
 
             # Train agent
-            if step_number > 5000:
+            if step_number > 50000:
                 agent.train()
 
             # Potentially update target net
             if step_number % update_target_step == 0:
                 agent.updateTargetNet()
-            
-            accumulated_epoch_reward += reward
-        
+
         # Produce output
-        print(epoch, ';', accumulated_epoch_reward, ';', agent.epsilon)
-        writeLog('./Data/' + start_time_str + '_log.csv', epoch, accumulated_epoch_reward, agent.epsilon)
+        print(epoch, ';', accumulated_epoch_reward, ';', agent.epsilon, ';', agent.weight_updates)
+        writeLog(path + '_log.csv', epoch, accumulated_epoch_reward, agent.epsilon, agent.weight_updates)
 
         if time.time() > end_time:
             print('timeout')
             break
+
+    # Save model and agent
+    saveModel(path + '_q-model.h5', agent.q_net)
+    saveModel(path + '_v-model.h5', agent.v_net)
+    saveAgent(path + '_agent.pkl', agent)
 
 if __name__ == "__main__":
     main()
