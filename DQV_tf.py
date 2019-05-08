@@ -84,17 +84,48 @@ class Agent:
         self.q_net.fit([prev_states, one_hot_actions], one_hot_actions * q_values[:, None], batch_size=self.batch_size, epochs=1, verbose=0)
         self.v_net.fit(prev_states, v_values, batch_size=self.batch_size, epochs=1, verbose=0)
         self.weight_updates += 1
-
         self.updateEpsilon()
+
+    def play(self, evaluation_games, output_path):
+        average_reward = 0.0
+
+        for _ in range(evaluation_games):
+            self.environment.reset()
+
+            observation, reward, done, _ = self.environment.step(1)
+
+            frame = getPreprocessedFrame(observation)
+            state = np.stack((frame, frame, frame, frame), axis=2)
+            state = np.reshape([state], (1, 84, 84, 4))
+
+            accumulated_epoch_reward = 0
+
+            while not done:
+                action = self.chooseAction(state)
+                observation, reward, done, _ = self.environment.step(action)
+                accumulated_epoch_reward += reward
+
+                frame = getPreprocessedFrame(observation)
+                frame = np.reshape([frame], (1, 84, 84, 1))
+                state = np.append(frame, state[:, :, :, :3], axis=3)
+
+            average_reward += accumulated_epoch_reward / evaluation_games
+
+        writeLog(output_path + '_eval.csv', [self.weight_updates, average_reward])
 
     def chooseAction(self, state):
         state = np.float32(state / 255.0)
+        actions_mask = np.ones(self.actionspace_size).reshape(1, self.actionspace_size)
+        q_values = self.q_net.predict([state, actions_mask])
+        action = np.argmax(q_values)
+
+        return action
+
+    def useEpsilonGreedy(self, state):
         if random.random() < self.epsilon:
             action = random.randrange(self.actionspace_size)
         else:
-            actions_mask = np.ones(self.actionspace_size).reshape(1, self.actionspace_size)
-            q_values = self.q_net.predict([state, actions_mask])
-            action = np.argmax(q_values)
+            action = self.chooseAction(state)
 
         return action
 
@@ -113,12 +144,12 @@ def getPreprocessedFrame(observation):
     observation = np.uint8(observation * 255)
     return observation
 
-def writeLog(path, epoch, accumulated_epoch_reward, epsilon, weight_updates):
+def writeLog(path, content):
     if not os.path.exists('./Data'):
         os.makedirs('./Data')
     with open(path, 'a') as f:
         csv_writer = csv.writer(f, delimiter=';')
-        csv_writer.writerow([epoch, accumulated_epoch_reward, epsilon, weight_updates])
+        csv_writer.writerow(content)
 
 def saveModel(path, model):
     if not os.path.exists('./Data'):
@@ -144,8 +175,10 @@ def main():
 
     continue_trainig = True if len(sys.argv) == 2 else False
 
-    epochs = 100000
+    training_start = 50000
     update_target_step = 10000
+    evaluation_step = 10000
+    evaluation_games = 10
 
     actionspace_size = environment.action_space.n
     batch_size = 32
@@ -168,10 +201,10 @@ def main():
         memory = deque(maxlen=1000000)
         agent = Agent(environment, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
 
-    step_number = 0
+    step_number = agent.weight_updates
     end_time = time.time() + 250000
 
-    for epoch in range(epochs):
+    while time.time() < end_time:
         environment.reset()
 
         for _ in range(random.randint(1, 25)):
@@ -184,13 +217,13 @@ def main():
 
         accumulated_epoch_reward = 0
 
-        while not done:
+        while not done and time.time() < end_time:
             step_number += 1
             terminal = False
             lives = info['ale.lives']
 
             # Choose and perform action and check if life lost
-            action = agent.chooseAction(state)
+            action = agent.useEpsilonGreedy(state)
             observation, reward, done, info = environment.step(action)
             accumulated_epoch_reward += reward
             reward = np.clip(reward, -1., 1.)
@@ -207,20 +240,20 @@ def main():
             agent.storeExperience(prev_state, action, reward, state, terminal)
 
             # Train agent
-            if step_number > 50000:
+            if step_number > training_start:
                 agent.train()
 
-            # Potentially update target net
-            if step_number % update_target_step == 0:
-                agent.updateTargetNet()
+                # Potentially update target net
+                if step_number % update_target_step == 0:
+                    agent.updateTargetNet()
+
+                # Evaluation games
+                if step_number % evaluation_step == 0:
+                    done = True
+                    agent.play(evaluation_games, path)
 
         # Produce output
-        print(epoch, ';', accumulated_epoch_reward, ';', agent.epsilon, ';', agent.weight_updates)
-        writeLog(path + '_log.csv', epoch, accumulated_epoch_reward, agent.epsilon, agent.weight_updates)
-
-        if time.time() > end_time:
-            print('timeout')
-            break
+        writeLog(path + '_log.csv', [step_number, accumulated_epoch_reward, agent.epsilon, agent.weight_updates])
 
     # Save model and agent
     saveModel(path + '_q-model.h5', agent.q_net)
