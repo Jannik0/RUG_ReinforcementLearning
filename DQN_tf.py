@@ -79,13 +79,13 @@ class Agent:
         self.weight_updates += 1
         self.updateEpsilon()
 
-    def play(self, evaluation_games, output_path):
+    def play(self, environment, evaluation_games, output_path):
         average_reward = 0.0
 
         for _ in range(evaluation_games):
-            self.environment.reset()
+            environment.reset()
 
-            observation, reward, done, _ = self.environment.step(1)
+            observation, reward, done, _ = environment.step(1)
 
             frame = getPreprocessedFrame(observation)
             state = np.stack((frame, frame, frame, frame), axis=2)
@@ -95,7 +95,7 @@ class Agent:
 
             while not done:
                 action = self.chooseAction(state)
-                observation, reward, done, _ = self.environment.step(action)
+                observation, reward, done, _ = environment.step(action)
                 accumulated_epoch_reward += reward
 
                 frame = getPreprocessedFrame(observation)
@@ -165,6 +165,7 @@ def main():
     print("session will be stored at " + path)
 
     environment = gym.make(ENVIRONMENT_ID)
+    eval_environment = gym.make(ENVIRONMENT_ID)
 
     continue_trainig = True if len(sys.argv) == 2 else False
 
@@ -241,11 +242,10 @@ def main():
 
                 # Evaluation games
                 if step_number % evaluation_step == 0:
-                    done = True
-                    agent.play(evaluation_games, path)
+                    agent.play(eval_environment, evaluation_games, path)
 
         # Produce output
-        writeLog(path + '_log.csv', [step_number, accumulated_epoch_reward, agent.epsilon, agent.weight_updates])
+        writeLog(path + '_log.csv', [agent.weight_updates, accumulated_epoch_reward, agent.epsilon])
 
     # Save model and agent
     saveModel(path + '_model.h5', agent.q_net)
