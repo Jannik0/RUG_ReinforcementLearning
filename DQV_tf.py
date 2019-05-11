@@ -209,7 +209,7 @@ def main():
 
     print("starting")
 
-    while step_number < training_stop and time.time() < end_time:
+    while agent.weight_updates < training_stop and time.time() < end_time:
         environment.reset()
 
         for _ in range(random.randint(1, 25)):
@@ -222,7 +222,7 @@ def main():
 
         accumulated_epoch_reward = 0
 
-        while not done and time.time() < end_time:
+        while not done and agent.weight_updates < training_stop and time.time() < end_time:
             step_number += 1
             terminal = False
             lives = info['ale.lives']
