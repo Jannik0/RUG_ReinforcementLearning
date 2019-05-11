@@ -13,8 +13,6 @@ import skimage
 import gym
 import keras
 
-ENVIRONMENT_ID = 'Breakout-v0'
-
 class Network:
     def __init__(self, actionspace_size, learning_rate, gradient_momentum, gradient_min):
         frames_input = keras.layers.Input((84, 84, 4))
@@ -104,7 +102,7 @@ class Agent:
 
             average_reward += accumulated_epoch_reward / evaluation_games
 
-        writeLog(output_path + '_eval.csv', [self.weight_updates, average_reward])
+        writeLog(output_path + 'eval.csv', [self.weight_updates, average_reward])
 
     def chooseAction(self, state):
         state = np.float32(state / 255.0)
@@ -138,20 +136,14 @@ def getPreprocessedFrame(observation):
     return observation
 
 def writeLog(path, content):
-    if not os.path.exists('./Data'):
-        os.makedirs('./Data')
-    with open(path, 'a') as f:
-        csv_writer = csv.writer(f, delimiter=';')
+    with open(path, 'a') as log:
+        csv_writer = csv.writer(log, delimiter=';')
         csv_writer.writerow(content)
 
 def saveModel(path, model):
-    if not os.path.exists('./Data'):
-        os.makedirs('./Data')
     model.save(path)
 
 def saveAgent(path, agent):
-    if not os.path.exists('./Data'):
-        os.makedirs('./Data/')
     with open(path, 'wb') as saved_object:
         pickle.dump(agent, saved_object, pickle.HIGHEST_PROTOCOL)
 
@@ -160,19 +152,25 @@ def loadAgent(path):
         return pickle.load(saved_object)
 
 def main():
-    print("Hello World\nThis is DQN " + ENVIRONMENT_ID)
-    path = './Data/' + time.strftime("%Y_%m_%d_%H-%M-%S", time.localtime()) + '_DQN_' + ENVIRONMENT_ID
-    print("session will be stored at " + path)
+    if len(sys.argv) != 3:
+        print("Please provide a valid environment and session ID")
+        return
 
-    environment = gym.make(ENVIRONMENT_ID)
-    eval_environment = gym.make(ENVIRONMENT_ID)
+    environment_id = sys.argv[1]
+    session_id = sys.argv[2]
+    path = './Data/DQN/' + environment_id + '/' + session_id + '/'
+    if not os.path.exists(path):
+        os.makedirs(path)
+    print("This is DQN " + environment_id + " " + session_id + "\nSession will be stored at " + path)
 
-    continue_trainig = True if len(sys.argv) == 2 else False
+    environment = gym.make(environment_id)
+    eval_environment = gym.make(environment_id)
 
     training_start = 50000
     update_target_step = 10000
-    evaluation_step = 10000
-    evaluation_games = 10
+    evaluation_step = 50000
+    evaluation_games = 20
+    training_stop = 10000000
 
     actionspace_size = environment.action_space.n
     batch_size = 32
@@ -184,20 +182,26 @@ def main():
     epsilon_decay = 1e-06
     epsilon_min = 0.1
 
-    if (continue_trainig):
-        print('loading previously saved agent')
-        agent = loadAgent('./Data/' + sys.argv[1])
+    if os.path.isfile(path + 'agent.pkl'):
+        print("agent found; loading previous agent")
+        agent = loadAgent(path + 'agent.pkl')
+        step_number = agent.weight_updates + training_start
     else:
-        print("creating new agent")
+        if os.path.isfile(path + 'log.csv'):
+            print("incomplete session found; aborting")
+            return
+        print("no agent found; creating new agent")
         q_net = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min).model
         target_net = copy.deepcopy(q_net)
         memory = deque(maxlen=1000000)
         agent = Agent(environment, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
+        step_number = 0
 
-    step_number = agent.weight_updates
     end_time = time.time() + 250000
 
-    while time.time() < end_time:
+    print("starting")
+
+    while step_number < training_stop and time.time() < end_time:
         environment.reset()
 
         for _ in range(random.randint(1, 25)):
@@ -245,11 +249,11 @@ def main():
                     agent.play(eval_environment, evaluation_games, path)
 
         # Produce output
-        writeLog(path + '_log.csv', [agent.weight_updates, accumulated_epoch_reward, agent.epsilon])
+        writeLog(path + 'log.csv', [agent.weight_updates, accumulated_epoch_reward, agent.epsilon])
 
     # Save model and agent
-    saveModel(path + '_model.h5', agent.q_net)
-    saveAgent(path + '_agent.pkl', agent)
+    saveModel(path + 'model.h5', agent.q_net)
+    saveAgent(path + 'agent.pkl', agent)
 
 if __name__ == "__main__":
     main()
