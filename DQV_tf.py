@@ -37,8 +37,7 @@ class Network:
         self.model.compile(loss='mse', optimizer=keras.optimizers.RMSprop(lr=learning_rate, rho=gradient_momentum, epsilon=gradient_min))
 
 class Agent:
-    def __init__(self, environment, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min):
-        self.environment = environment
+    def __init__(self, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min):
         self.q_net = q_net
         self.v_net = v_net
         self.target_net = target_net
@@ -150,6 +149,9 @@ def writeLog(path, content):
 def saveModel(path, model):
     model.save(path)
 
+def loadModel(path):
+    return keras.models.load_model(path)
+
 def saveAgent(path, agent):
     with open(path, 'wb') as saved_object:
         pickle.dump(agent, saved_object, pickle.HIGHEST_PROTOCOL)
@@ -192,6 +194,9 @@ def main():
     if os.path.isfile(path + 'agent.pkl'):
         print("agent found; loading previous agent")
         agent = loadAgent(path + 'agent.pkl')
+        agent.q_net = loadModel(path + 'qmodel.h5')
+        agent.v_net = loadModel(path + 'vmodel.h5')
+        agent.target_net = loadModel(path + 'targetmodel.h5')
         step_number = agent.weight_updates + training_start
     else:
         if os.path.isfile(path + 'log.csv'):
@@ -202,7 +207,7 @@ def main():
         v_net = Network('v', actionspace_size, learning_rate, gradient_momentum, gradient_min).model
         target_net = copy.deepcopy(v_net)
         memory = deque(maxlen=1000000)
-        agent = Agent(environment, q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
+        agent = Agent(q_net, v_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
         step_number = 0
 
     end_time = time.time() + 250000
@@ -260,7 +265,10 @@ def main():
         writeLog(path + 'log.csv', [agent.weight_updates, accumulated_epoch_reward, agent.epsilon])
 
     # Save model and agent
-    saveModel(path + 'model.h5', agent.q_net)
+    saveModel(path + 'qmodel.h5', agent.q_net)
+    saveModel(path + 'vmodel.h5', agent.v_net)
+    saveModel(path + 'targetmodel.h5', agent.target_net)
+    agent.q_net = agent.v_net = agent.target_net = None
     saveAgent(path + 'agent.pkl', agent)
 
 if __name__ == "__main__":
