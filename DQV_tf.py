@@ -177,7 +177,7 @@ def main():
 
     training_start = 50000
     update_target_step = 10000
-    evaluation_step = 50000
+    evaluation_step = 10000
     evaluation_games = 20
     training_stop = 10000000
 
@@ -191,6 +191,7 @@ def main():
     epsilon_decay = 1e-06
     epsilon_min = 0.1
 
+    # Load previous session or create new one
     if os.path.isfile(path + 'agent.pkl'):
         print("agent found; loading previous agent")
         agent = loadAgent(path + 'agent.pkl')
@@ -214,6 +215,7 @@ def main():
 
     print("starting")
 
+    # Main loop
     while agent.weight_updates < training_stop and time.time() < end_time:
         environment.reset()
 
@@ -264,7 +266,7 @@ def main():
         # Produce output
         writeLog(path + 'log.csv', [agent.weight_updates, accumulated_epoch_reward, agent.epsilon])
 
-    # Save model and agent
+    # Save models and agent
     saveModel(path + 'qmodel.h5', agent.q_net)
     saveModel(path + 'vmodel.h5', agent.v_net)
     saveModel(path + 'targetmodel.h5', agent.target_net)
