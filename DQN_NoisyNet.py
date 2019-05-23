@@ -19,17 +19,18 @@ class NoisyLayer(keras.layers.Layer):
 
     def __init__(self, in_shape=(1,2592), out_dim=256, activation='tf.identity', name='Layer', **kwargs):
         
-        # Parameters
+        # Parameter assignments
         self.in_shape = in_shape
         self.out_units = out_dim
         self.activation = eval(activation)
         self.activation_str = activation 
         self.name = name
         
-        # Non-direct-parametric assignments
-        self.mu_interval = 1.0/np.sqrt(float(self.out_units))
+        # Derived assignments
+        self.p = float(self.in_shape[1])
+        self.mu_interval_value = 1.0/np.sqrt(self.p)
         self.sig_0 = 0.5
-        self.resample_noise_flag = True
+        self.sig_init_constant = self.sig_0/np.sqrt(self.p)
         
         # Naming weights/biases
         self.w_mu_name = self.name+'w_mu'
@@ -41,8 +42,8 @@ class NoisyLayer(keras.layers.Layer):
 
     def build(self, input_shape):
         # Initializers
-        self.mu_initializer = tf.initializers.random_uniform(minval=-self.mu_interval, maxval=self.mu_interval) # Mu-initializer
-        self.si_initializer = tf.initializers.constant(self.sig_0/np.sqrt(float(self.out_units)))               # Sigma-initializer
+        self.mu_initializer = tf.initializers.random_uniform(minval=-self.mu_interval_value, maxval=self.mu_interval_value) # Mu-initializer
+        self.si_initializer = tf.initializers.constant(self.sig_init_constant)                                              # Sigma-initializer
         
         # Weights
         # 'Normal' weights
@@ -80,8 +81,10 @@ class NoisyLayer(keras.layers.Layer):
         self.w = tf.math.add(self.w_mu, tf.math.multiply(self.w_si, self.w_eps))
         self.b = tf.math.add(self.b_mu, tf.math.multiply(self.b_si, self.q_eps))
 
-        return self.activation(tf.linalg.matmul(inputs, self.w) + self.b)
-
+        return self.activation(tf.math.add(tf.linalg.matmul(inputs, self.w), self.b))
+    
+    # Functionality supporting deepcopying, saving, and loading
+    
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.out_units)
         
@@ -94,13 +97,13 @@ class NoisyLayer(keras.layers.Layer):
 
         return config
     
-    
-    # Noise sampling
+    # Noise sampling - Factorised Gaussian noise
     
     def assign_resampling(self):
-        self.p_eps = self.f(self.resample_noise([self.in_shape[-1], 1]))
-        self.q_eps = self.f(self.resample_noise([1, self.out_units]))
-        self.w_eps = self.p_eps * self.q_eps                                # Cartesian product of input_noise x output_noise 
+        # p = related to (i) inputs; q = related to (j) outputs
+        self.p_eps = self.f(self.resample_noise([self.in_shape[1], 1]))     #         = f(eps_i) in paper
+        self.q_eps = self.f(self.resample_noise([1, self.out_units]))       # = eps_b = f(eps_j) in paper; Eqn. 11
+        self.w_eps = self.p_eps * self.q_eps                                # Cartesian product of input_noise x output_noise; Eqn. 10
 
     def resample_noise(self, shape):
         return tf.random.normal(shape, mean=0.0, stddev=1.0, seed=None, name=None)
@@ -136,7 +139,7 @@ class Network:
         self.model.compile(loss='mse', optimizer=keras.optimizers.RMSprop(lr=learning_rate, rho=gradient_momentum, epsilon=gradient_min))
 
 class Agent:
-    def __init__(self, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min):
+    def __init__(self, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min, noisy_flag):
         self.q_net = q_net
         self.target_net = target_net
         self.memory = memory
@@ -147,6 +150,7 @@ class Agent:
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
         self.weight_updates = 0
+        self.noisy_flag = noisy_flag
 
     def train(self):
         mini_batch = random.sample(self.memory, self.batch_size)
@@ -215,7 +219,7 @@ class Agent:
         return action
 
     def useEpsilonGreedy(self, state):
-        if random.random() < self.epsilon:
+        if not self.noisy_flag and random.random() < self.epsilon:
             action = random.randrange(self.actionspace_size)
         else:
             action = self.chooseAction(state)
@@ -265,7 +269,7 @@ def main():
 
     environment_id = sys.argv[1]
     session_id = sys.argv[2]
-    path = './Data/DQN/' + environment_id + '/' + session_id + '/'
+    path = './Data/NoisyNet/' + environment_id + '/' + session_id + '/'
     if not os.path.exists(path):
         os.makedirs(path)
     print("This is DQN " + environment_id + " " + session_id + "\nSession will be stored at " + path)
@@ -288,6 +292,7 @@ def main():
     epsilon = 1
     epsilon_decay = 1e-06
     epsilon_min = 0.1
+    noisy_flag = True
 
     # Load previous session or create new one
     if os.path.isfile(path + 'agent.pkl'):
@@ -301,11 +306,11 @@ def main():
             print("incomplete session found; aborting")
             return
         print("no agent found; creating new agent")
-        q_net = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min, True).model
+        q_net = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min, noisy_flag).model
         with CustomObjectScope({"NoisyLayer":NoisyLayer}):
             target_net = copy.deepcopy(q_net)
         memory = deque(maxlen=1000000)
-        agent = Agent(q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min)
+        agent = Agent(q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min, noisy_flag)
         step_number = 0
 
     end_time = time.time() + 250000
