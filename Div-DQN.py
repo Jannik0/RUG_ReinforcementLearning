@@ -49,7 +49,8 @@ class Network:
         def loss(y_true, y_pred):
             divergence = kld()
             global FACTOR
-            FACTOR -= 1e-08
+            if FACTOR > 0.1:
+                FACTOR -= 1e-08
             return mse(y_true, y_pred) - FACTOR * divergence
 
         return loss
