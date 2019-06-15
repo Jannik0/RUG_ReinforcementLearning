@@ -46,24 +46,24 @@ class NoisyLayer(keras.layers.Layer):
         self.si_initializer = tf.initializers.constant(self.sig_init_constant)                                              # Sigma-initializer
         
         # Weights
-        # 'Normal' weights
+        # 'Normal' weights -- (get access by: [model.noisy_layer].get_weights()[0] - tested -- correct!)
         self.w_mu = self.add_weight(  name=self.w_mu_name, 
                                       shape=(self.in_shape[1], self.out_units),
                                       initializer=self.mu_initializer,
                                       trainable=True)
-        # 'Noisy' weights                              
+        # 'Noisy' weights -- (get access by: .get_weights()[1] - tested -- correct!)                    
         self.w_si = self.add_weight(  name=self.w_si_name, 
                                       shape=(self.in_shape[1], self.out_units),
                                       initializer=self.si_initializer,
                                       trainable=True)
         
         # Biases
-        # 'Normal' biases
+        # 'Normal' biases -- (get access by: .get_weights()[2][0] - tested -- correct!)
         self.b_mu = self.add_weight(  name=self.b_mu_name, 
                                       shape=(self.in_shape[0], self.out_units),
                                       initializer=self.mu_initializer,
                                       trainable=True)
-        # 'Noisy' biases
+        # 'Noisy' biases -- (get access by: .get_weights()[3][0] - tested -- correct!)
         self.b_si = self.add_weight(  name=self.b_si_name, 
                                       shape=(self.in_shape[0], self.out_units),
                                       initializer=self.si_initializer,
@@ -111,36 +111,70 @@ class NoisyLayer(keras.layers.Layer):
     def f(self, x):
         return tf.math.multiply(tf.math.sign(x), tf.math.sqrt(tf.math.abs(x)))
     
+    # Get custom weights (the non-noisy ones for evaluation games)
+    def get_non_noisy_weights(self):
+        return [self.get_weights()[0], self.get_weights()[2][0]] # return weights_mu (=self.w_mu) and bias_mu (=self.b_mu) (;the weights + biases not related to randomness/noise)
+        
 
 
 class Network:
     def __init__(self, actionspace_size, learning_rate, gradient_momentum, gradient_min, noisy_flag):
-        frames_input = keras.layers.Input((84, 84, 4))
-        actions_input = keras.layers.Input((actionspace_size,))
-
-        conv1 = keras.layers.Conv2D(16, (8, 8), strides=(4, 4), activation="relu")(frames_input)
-        conv2 = keras.layers.Conv2D(32, (4, 4), strides=(2, 2), activation="relu")(conv1)
-
-        flattened = keras.layers.Flatten()(conv2)
+        self.noisy_flag = noisy_flag
+        
+        ## Define weights
+        self.conv1_layer = keras.layers.Conv2D(16, (8, 8), strides=(4, 4), activation="relu")
+        self.conv2_layer = keras.layers.Conv2D(32, (4, 4), strides=(2, 2), activation="relu")
         
         if noisy_flag:
             # NoisyNet
-            hidden = NoisyLayer(in_shape=(1,2592), out_dim=256, activation="tf.nn.relu", name='Noisy1')(flattened)
-            output = NoisyLayer(in_shape=(1,256), out_dim=actionspace_size, activation="tf.identity", name='Noisy2')(hidden) # add diff actv-fnctn
+            self.hidden_layer = NoisyLayer(in_shape=(1,2592), out_dim=256, activation="tf.nn.relu", name='Noisy1')
+            self.output_layer = NoisyLayer(in_shape=(1,256), out_dim=actionspace_size, activation="tf.identity", name='Noisy2')
         else:
             # Standard DQN
-            hidden = keras.layers.Dense(256, activation="relu")(flattened)
-            output = keras.layers.Dense(actionspace_size)(hidden)
+            self.hidden_layer = keras.layers.Dense(256, activation="relu")
+            self.output_layer = keras.layers.Dense(actionspace_size)
+        
+        
+        ## Construct net architecture
+        frames_input = keras.layers.Input((84, 84, 4))
+        actions_input = keras.layers.Input((actionspace_size,))
+
+        conv1 = self.conv1_layer(frames_input)
+        conv2 = self.conv2_layer(conv1)
+
+        flattened = keras.layers.Flatten()(conv2)
+        
+        hidden = self.hidden_layer(flattened)
+        output = self.output_layer(hidden)
 
         filtered_output = keras.layers.merge.Multiply()([output, actions_input])
 
         self.model = keras.models.Model(inputs=[frames_input, actions_input], outputs=filtered_output)
 
         self.model.compile(loss='mse', optimizer=keras.optimizers.RMSprop(lr=learning_rate, rho=gradient_momentum, epsilon=gradient_min))
+        
+    def get_custom_model_weights(self): # Get custom set of weights which includes only non-noisy ones for NoisyLayer
+        weights = []
+        weights.append(self.conv1_layer.get_weights()) #self.x_layer.get_weights()[0] == Weights && self.x_layer.get_weights()[1] == Biases 
+        weights.append(self.conv2_layer.get_weights())
+        weights.append(self.hidden_layer.get_weights() if not self.noisy_flag else self.hidden_layer.get_non_noisy_weights())
+        weights.append(self.output_layer.get_weights() if not self.noisy_flag else self.output_layer.get_non_noisy_weights())
+        return weights
+    
+    def set_non_noisy_weights(self, weights):
+        if self.noisy_flag:
+            print('Error. Not supposed to call set_non_noisy_weights()!')
+            return
+        self.conv1_layer.set_weights(weights[0])
+        self.conv2_layer.set_weights(weights[1])
+        self.hidden_layer.set_weights(weights[2])
+        self.output_layer.set_weights(weights[3])
 
 class Agent:
-    def __init__(self, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min, noisy_flag):
-        self.q_net = q_net
+    def __init__(self, q_net_network, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min, noisy_flag):
+        self.q_net_network = q_net_network  # Containing functions defined in network class; To get access to non-noisy weights in case of NoisyNet
+        self.eval_network = None            # Containing functions defined in network class; To be able to set current q_net_network weights
+        self.q_net = q_net                  # Contains only model-architecture
         self.target_net = target_net
         self.memory = memory
         self.batch_size = batch_size
@@ -185,7 +219,8 @@ class Agent:
         
     def play(self, environment, evaluation_games, output_path):
         average_reward = 0.0
-
+        self.eval_network.set_non_noisy_weights(self.q_net_network.get_custom_model_weights())
+            
         for _ in range(evaluation_games):
             environment.reset()
 
@@ -198,7 +233,7 @@ class Agent:
             accumulated_epoch_reward = 0
 
             while not done:
-                action = self.chooseAction(state)
+                action = self.chooseAction(state, True)
                 observation, reward, done, _ = environment.step(action)
                 accumulated_epoch_reward += reward
 
@@ -210,10 +245,14 @@ class Agent:
 
         writeLog(output_path + 'eval.csv', [self.weight_updates, average_reward])
 
-    def chooseAction(self, state):
+    def chooseAction(self, state, evaluation=False):
+        if self.noisy_flag and evaluation: # Evaluate non-noisily in case of Noisy-Net
+            model = self.eval_network.model
+        else:
+            model = self.q_net
         state = np.float32(state / 255.0)
         actions_mask = np.ones(self.actionspace_size).reshape(1, self.actionspace_size)
-        q_values = self.q_net.predict([state, actions_mask])
+        q_values = model.predict([state, actions_mask])
         action = np.argmax(q_values)
 
         return action
@@ -269,10 +308,10 @@ def main():
 
     environment_id = sys.argv[1]
     session_id = sys.argv[2]
-    path = './Data/NoisyNet/' + environment_id + '/' + session_id + '/'
+    path = './Data/NoisyNet_DQN/' + environment_id + '/' + session_id + '/'
     if not os.path.exists(path):
         os.makedirs(path)
-    print("This is DQN " + environment_id + " " + session_id + "\nSession will be stored at " + path)
+    print("This is NoisyNet-DQN " + environment_id + " " + session_id + "\nSession will be stored at " + path)
 
     environment = gym.make(environment_id)
     eval_environment = gym.make(environment_id)
@@ -298,29 +337,44 @@ def main():
     if os.path.isfile(path + 'agent.pkl'):
         print("agent found; loading previous agent")
         agent = loadAgent(path + 'agent.pkl')
-        agent.q_net = loadModel(path + 'qmodel.h5')
+        noisy_flag = agent.noisy_flag
+        
+        # Q-net
+        q_net = loadModel(path + 'qmodel.h5')
+        q_net_network = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min, noisy_flag)
+        q_net_network.model.set_weights(q_net.get_weights())
+        agent.q_net_network = q_net_network
+        agent.q_net = agent.q_net_network.model
+        
+        # Target net
         agent.target_net = loadModel(path + 'targetmodel.h5')
+        
         step_number = agent.weight_updates + training_start
     else:
         if os.path.isfile(path + 'log.csv'):
             print("incomplete session found; aborting")
             return
         print("no agent found; creating new agent")
-        q_net = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min, noisy_flag).model
+        q_net_network = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min, noisy_flag)
+        q_net = q_net_network.model
         with CustomObjectScope({"NoisyLayer":NoisyLayer}):
             target_net = copy.deepcopy(q_net)
         memory = deque(maxlen=1000000)
-        agent = Agent(q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min, noisy_flag)
+        agent = Agent(q_net_network, q_net, target_net, memory, batch_size, discount_factor, actionspace_size, epsilon, epsilon_decay, epsilon_min, noisy_flag)
         step_number = 0
-
+    
+    
+    # Evaluation-network in case of NoisyNet training; Standard DQN network to get non-noisy evaluation
+    agent.eval_network = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min, False)
+    
     end_time = time.time() + 250000
 
     print("starting")
-
+    
     # Main loop
     while agent.weight_updates < training_stop and time.time() < end_time:
         environment.reset()
-
+        
         for _ in range(random.randint(1, 25)):
             observation, reward, done, info = environment.step(1)
 
@@ -335,7 +389,7 @@ def main():
             step_number += 1
             terminal = False
             lives = info['ale.lives']
-
+            
             # Choose and perform action and check if life lost
             action = agent.useEpsilonGreedy(state)
             observation, reward, done, info = environment.step(action)
@@ -367,12 +421,14 @@ def main():
 
         # Produce output
         writeLog(path + 'log.csv', [agent.weight_updates, accumulated_epoch_reward, agent.epsilon])
-
+    
+    print('About to save...')
     # Save models and agent
     saveModel(path + 'qmodel.h5', agent.q_net)
     saveModel(path + 'targetmodel.h5', agent.target_net)
-    agent.q_net = agent.target_net = None
-    saveAgent(path + 'agent.pkl', agent)
+    print('Saved networks. NOT about to save agent.',)
+    #agent.q_net = agent.target_net = agent.q_net_network = agent.eval_network = None
+    #saveAgent(path + 'agent.pkl', agent)
 
 if __name__ == "__main__":
     main()
