@@ -1,5 +1,4 @@
 import random
-import copy
 import os
 import sys
 import csv
@@ -215,7 +214,7 @@ def main():
         agent = Agent(q_net, target_net, memory, batch_size, discount_factor, actionspace_size)
         step_number = 0
 
-    end_time = time.time() + 250000
+    end_time = time.time() + 860000
 
     print("starting")
 
@@ -277,9 +276,9 @@ def main():
 
     # Save models and agent
     saveModel(path + 'qmodel.h5', agent.q_net)
-    saveModel(path + 'targetmodel.h5', agent.target_net)
-    agent.q_net = agent.target_net = None
-    saveAgent(path + 'agent.pkl', agent)
+    #saveModel(path + 'targetmodel.h5', agent.target_net)
+    #agent.q_net = agent.target_net = None
+    #saveAgent(path + 'agent.pkl', agent)
 
 if __name__ == "__main__":
     main()
