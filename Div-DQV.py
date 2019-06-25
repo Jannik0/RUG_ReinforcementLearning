@@ -89,7 +89,6 @@ class Agent:
         q_values = np.empty(self.batch_size)
         v_values = np.zeros((self.batch_size,))
         v_targets = self.target_net.predict(next_states)
-        print(v_targets[0])
 
         for i in range(self.batch_size):
             if terminals[i]:
