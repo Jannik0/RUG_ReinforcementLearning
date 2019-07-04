@@ -367,7 +367,7 @@ def main():
     # Evaluation-network in case of NoisyNet training; Standard DQN network to get non-noisy evaluation
     agent.eval_network = Network(actionspace_size, learning_rate, gradient_momentum, gradient_min, False)
     
-    end_time = time.time() + 250000
+    end_time = time.time() + 863600 # 10 Days
 
     print("starting")
     
