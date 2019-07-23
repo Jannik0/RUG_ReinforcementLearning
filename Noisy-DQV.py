@@ -455,11 +455,11 @@ def main():
         writeLog(path + 'log.csv', [agent.weight_updates, accumulated_epoch_reward, agent.epsilon])
 
     # Save models and agent
-    print('About to save models.')
+    #print('About to save models.')
     saveModel(path + 'qmodel.h5', agent.q_net)
-    saveModel(path + 'vmodel.h5', agent.v_net)
-    saveModel(path + 'targetmodel.h5', agent.target_net)
-    print('Saved models. Bye!')
+    #saveModel(path + 'vmodel.h5', agent.v_net)
+    #saveModel(path + 'targetmodel.h5', agent.target_net)
+    #print('Saved models. Bye!')
     #agent.q_net = agent.v_net = agent.target_net = agent.q_net_network = agent.v_net_network = agent.eval_network = None
     #saveAgent(path + 'agent.pkl', agent)
 
